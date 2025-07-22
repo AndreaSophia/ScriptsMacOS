@@ -1,0 +1,42 @@
+# 🏷️ HostnameSeal™ – Reafirma tu identidad Mac
+
+> 🔒 *Un sello de integridad para nombres de host en macOS.*  
+> 🌪️ Evita cambios accidentales, intencionales o demoníacos en el hostname.  
+> 📡 Basado en la MAC del Wi-Fi para una identidad única y persistente.
+
+---
+
+## 🧬 ¿Qué hace este script?
+
+HostnameSeal™ es un generador de paquetes `.pkg` que:
+
+1. ✅ **Cambia el hostname, LocalHostName, ComputerName y NetBIOSName** del Mac a un valor derivado de la dirección MAC del Wi-Fi (por ejemplo: `MACaabbccddeeff`).
+2. ✅ Crea un **script reafirmador** que se ejecuta cada 35 minutos como `LaunchDaemon`, verificando que nadie lo haya cambiado.
+3. ✅ Si detecta un cambio, **lo restaura automáticamente** a su valor original y deja registro en logs.
+
+---
+
+## 🛠️ Componentes
+
+| Componente                          | Función                                                          |
+|------------------------------------|------------------------------------------------------------------|
+| `preinstall` script                | Asigna el hostname según la MAC del Wi-Fi                        |
+| `reaffirm_hostname.sh`            | Verifica cada 35 minutos que el hostname no haya cambiado        |
+| `com.itau.hostname_reaffirm.plist` | LaunchDaemon que ejecuta el script de reafirmación periódica     |
+| `.pkg` final                       | Instalable, firma el cambio y protege el Mac de rebautismos herejes |
+
+---
+
+## 🔧 Requisitos
+
+- macOS 12 o superior
+- Permisos de administrador para instalación
+- Interfaz Wi-Fi activa (se usa para obtener la MAC)
+
+---
+
+## 🏗️ Cómo generar el paquete
+
+```bash
+chmod +x build_hostname_seal.sh
+./build_hostname_seal.sh
