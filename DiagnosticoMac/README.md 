@@ -1,0 +1,40 @@
+# 🕵️‍♀️ Inspector Digital Nivel Safiye 9000
+
+> ⚠️ *Un script de auditoría para macOS que ve lo que otros ignoran.*  
+> 🧠 Con alma de hacker y corazón de poeta, este script analiza herramientas de control, cifrado, usuarios y presencia de MDM como si tuviera rayos X.
+
+---
+
+## 🧬 ¿Qué es esto?
+
+Este script ejecuta una inspección profunda del estado del sistema macOS. Detecta presencia de agentes de control (Cisco Umbrella, CrowdStrike, Forcepoint, etc.), analiza la activación de FileVault, identifica si el usuario es móvil o local, revisa Secure Token y verifica la inscripción y salud del MDM.
+
+Ideal para ingenieros Apple, admins IT o técnicos despiertos que quieren saber **quién controla realmente el Mac**.
+
+---
+
+## 🛠 Funciones principales
+
+| 🔍 Inspección                          | 💬 Resultado esperado |
+|--------------------------------------|------------------------|
+| 🔗 Presencia de agentes corporativos | Cisco Umbrella, CrowdStrike, Forcepoint, GlobalProtect, etc. |
+| 🔐 Estado de FileVault               | ¿Está activado el cifrado? |
+| 👤 Tipo de usuario                   | ¿Cuenta móvil o local? |
+| 🛡️ Secure Token                     | ¿El usuario puede abrir puertas seguras? |
+| 📲 Estado del MDM                    | ¿Está enrolado? ¿A qué servidor se conecta? |
+| 🧪 Corrupción MDM                    | Analiza estructura de perfiles |
+| 📉 Errores recientes en logs         | Usa `log show` para encontrar problemas MDM en la última hora |
+
+---
+
+## 📸 Ejemplo de salida
+
+```bash
+✅ Cisco Umbrella está presente. Sabe todo lo que haces, incluso cuando bostezas.
+✅ Encriptado. Tus secretos están guardados bajo 7 llaves.
+🏠 safiye es una cuenta local. Vive aquí. Paga arriendo en permisos UNIX.
+✅ Secure Token activo. Puede abrir puertas digitales sin romperlas.
+✅ MDM está activo. El equipo obedece... ¿por ahora?
+🌐 MDM conectado a: https://mdm.ejemplo.com
+✅ Estructura del MDM parece estable (por ahora).
+✅ Sin errores graves de MDM en el último rato. Silencio... demasiado silencio.
