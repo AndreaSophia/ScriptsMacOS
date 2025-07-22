@@ -1,0 +1,34 @@
+# 💀 El Exorcista de MDM – macOS Script
+
+> ⚙️ *Un script ceremonial para expulsar demonios digitales del alma de tu Mac*  
+> ✨ Por: [Safiye Yılmaz](https://github.com/AndreaSophia) – Ingeniera de almas computacionales
+
+---
+
+## 🧩 ¿Qué es esto?
+
+Este script está diseñado para **eliminar completamente los rastros de gestión MDM** (Mobile Device Management) de un equipo macOS, incluyendo perfiles, preferencias, y directorios asociados a Microsoft Intune y Apple Configuration Profiles.
+
+Incluye también un paso para **verificar y reparar el estado del Secure Token** del usuario actual, fundamental para el correcto funcionamiento de FileVault y privilegios de administrador.
+
+---
+
+## 🧪 Funciones principales
+
+| 🔧 Acción                                    | 💬 Descripción                                                                 |
+|---------------------------------------------|--------------------------------------------------------------------------------|
+| Eliminación de perfiles MDM (`profiles`)    | Borra todos los perfiles activos encontrados.                                 |
+| Borrado de rastros en `/Library`, `/var`    | Intune, Microsoft, preferencias gestionadas, bases de datos MDM, etc.         |
+| Verificación de Secure Token                | Muestra si el usuario actual tiene Secure Token activo.                       |
+| Reparación de Secure Token (opcional)       | Intenta activarlo usando un usuario admin preconfigurado (`LCLADMIN`).        |
+| Reinicio opcional del sistema               | Para renacer con el alma purificada, obviamente.                              |
+
+---
+
+## ⚠️ Advertencias
+
+- ⚡ Este script requiere privilegios de **superusuario (`sudo`)**.
+- 🔐 **Debes editar la línea del admin password** antes de ejecutarlo:
+
+```bash
+admin_pass="IntroduceAquíLaContraseñaSegura"
