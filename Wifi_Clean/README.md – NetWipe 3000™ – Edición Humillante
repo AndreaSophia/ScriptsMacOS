@@ -1,0 +1,46 @@
+# 🧼 NetWipe 3000™ – Edición Humillante
+
+> 🎭 *Una limpieza espiritual y técnica de tus configuraciones de red en macOS*  
+> 😤 Porque no siempre es culpa del router. A veces, el verdadero problema... eres tú.
+
+---
+
+## 🚀 ¿Qué es esto?
+
+**NetWipe 3000™** es un script creado para **reinicializar la configuración de red en macOS**, ideal para esos momentos en los que la conexión Wi-Fi actúa como si tuviera personalidad propia (y una muy desagradable).
+
+Está diseñado para técnicos, administradores y usuarios avanzados que necesitan un **reseteo total de las preferencias de red**, incluyendo DHCP, interfaces, y servicios de resolución DNS.
+
+Con mensajes sarcásticos, instrucciones claras y limpieza quirúrgica de configuraciones, es el script perfecto para humillarte antes de iluminarte. 🧘‍♀️
+
+---
+
+## 🧹 ¿Qué hace?
+
+| Acción                                | Detalle                                                                 |
+|--------------------------------------|-------------------------------------------------------------------------|
+| 🔌 Apaga el Wi-Fi                     | Como tus ganas de vivir los lunes                                       |
+| 🧽 Elimina preferencias de red        | Borra archivos de configuración obsoletos                              |
+| 🔁 Fuerza renovación de DHCP          | Usa `ipconfig` para renegociar conexión                                |
+| 🧠 Limpia la caché DNS                | `dscacheutil` + reinicio de `mDNSResponder`                            |
+| 📶 Enciende Wi-Fi de nuevo            | Porque somos gente de fe                                                |
+| 🔧 Reinicia servicios de red          | Carga de nuevo el demonio de mDNSResponder                             |
+| 📋 Muestra interfaces disponibles     | Para que al menos sepas qué existe                                     |
+
+---
+
+## 📸 Ejemplo de salida
+
+```bash
+📴 APAGANDO EL Wi-Fi... como tus ganas de vivir los lunes.
+🧽 LIMPIANDO configuraciones antiguas...
+🔁 REZANDO A DHCP para que te perdone...
+🧠 FLUSHING DNS... Porque claramente el Mac no era el único confundido.
+📶 ENCENDIENDO Wi-Fi otra vez...
+🔧 REINICIANDO servicios de red...
+📋 MOSTRANDO INTERFACES...
+✅ RED RESTAURADA.
+🎉 Si después de esto sigues sin red, te recomiendo probar con:
+    1. Llorar.
+    2. Golpear el router.
+    3. Llamar a tu mamá.
