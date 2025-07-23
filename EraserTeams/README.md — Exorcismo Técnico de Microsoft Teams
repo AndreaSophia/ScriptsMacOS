@@ -1,0 +1,36 @@
+# 🧼 Purga Total de Microsoft Teams – Modo Mike™️
+
+> ✨ Porque cuando el audio falla, el técnico no tiembla: ejecuta.  
+> Por Safiye 🧕, ejecutado con honor por Mike – técnico valiente, supersticioso, pero siempre con sudo a mano.
+
+---
+
+## 🎯 ¿Qué hace este script?
+
+Este script elimina completamente **Microsoft Teams** del sistema macOS, incluyendo:
+
+- 🗑️ Aplicación del sistema (`/Applications`)
+- 🗂️ Archivos del usuario (cachés, preferencias, logs)
+- 🎧 El infame `TeamsAudioDevice.driver`
+- 📜 Agentes y configuraciones persistentes
+- 📄 Crea un log de auditoría en `/var/log/teams_purge_by_mike.log`
+
+Y al final…  
+🚨 **Reinicia el equipo automáticamente** para asegurar la limpieza absoluta.  
+Mike lo sabe: sin reinicio, no hay redención.
+
+---
+
+## 💡 ¿Por qué usar este script?
+
+- Teams interfiere con el audio tras salir de suspensión.
+- El driver de sonido de Teams ha sido señalado como responsable de conflictos en llamadas.
+- Necesitas una purga limpia, profunda y documentada.
+
+---
+
+## 📜 Log de ejemplo
+
+```bash
+/var/log/teams_purge_by_mike.log
+2025-07-21 12:34:56 - Mike purgó Teams y su espíritu auditivo. El sistema está limpio.
