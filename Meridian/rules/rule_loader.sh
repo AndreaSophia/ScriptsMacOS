@@ -55,7 +55,7 @@ rule_loader_load() {
     if [ -n "$block" ]; then
       serialized="$(_rule_parse_block "$block")"
       if [ -n "$serialized" ]; then _rule_store_add "$serialized"; loaded=$((loaded+1));
-      else rejected=$((rejected+1)); fi
+      else rejected=$((rejected+1)); log_warn "rule_loader" "Bloque de regla inválido ignorado en $(basename "$file")"; fi
     fi
   done < <(find "$rules_dir" -name '*.rules.yaml' -type f 2>/dev/null | sort)
   log_info "rule_loader" "Reglas cargadas: ${loaded} válidas, ${rejected} rechazadas"
@@ -65,6 +65,8 @@ rule_loader_get_for_module() {
   local module_id="$1" line module
   while IFS= read -r line; do
     [ -z "$line" ] && continue
+    # Regla usa |||; cada delimitador son tres pipes. condition_module es campo 2,
+    # equivalente al campo 4 cuando cut separa por cada pipe individual.
     module="$(printf '%s\n' "$line" | cut -d'|' -f4)"
     [ "$module" = "$module_id" ] && printf '%s\n' "$line"
   done <<EOF
