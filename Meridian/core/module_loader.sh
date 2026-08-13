@@ -19,22 +19,18 @@ _manifest_get() {
   local key="$2"
   grep "^${key}:" "$manifest" 2>/dev/null | \
     sed "s/^${key}:[[:space:]]*//" | \
-    sed 's/^["\x27]//' | sed 's/["\x27]$//' | \
+    sed 's/^["'"'"']//' | sed 's/["'"'"']$//' | \
     tr -d '\r' | head -1
 }
 
 # =============================================================================
 # _manifest_validate <manifest_path> <module_dir>
-# Valida que el manifest contiene todos los campos obligatorios y que
-# los archivos requeridos existen en el directorio del módulo.
-# Retorna 0 si es válido, 1 si no (con mensajes de error en stderr)
 # =============================================================================
 _manifest_validate() {
   local manifest="$1"
   local module_dir="$2"
   local errors=0
 
-  # Campos obligatorios del manifest
   for field in id name category version criticality requires_root timeout_seconds; do
     local val
     val="$(_manifest_get "$manifest" "$field")"
@@ -45,14 +41,12 @@ _manifest_validate() {
     fi
   done
 
-  # Archivo diagnose.sh debe existir
   if [ ! -f "${module_dir}/diagnose.sh" ]; then
     log_warn "module_loader" \
       "Módulo '$(basename "$module_dir")': falta diagnose.sh"
     errors=$((errors + 1))
   fi
 
-  # Si repairable no está implícito, verificar consistencia
   local repairable
   repairable="$(_manifest_get "$manifest" "repairable")"
   if [ "$repairable" = "true" ]; then
@@ -68,7 +62,6 @@ _manifest_validate() {
     fi
   fi
 
-  # Validar enum criticality
   local criticality
   criticality="$(_manifest_get "$manifest" "criticality")"
   case "$criticality" in
@@ -80,13 +73,11 @@ _manifest_validate() {
       ;;
   esac
 
-  return $errors
+  [ "$errors" -eq 0 ]
 }
 
 # =============================================================================
 # module_loader_discover <modules_base_dir>
-# Escanea el directorio base buscando manifests y registra los módulos válidos.
-# Retorna el número de módulos registrados correctamente.
 # =============================================================================
 module_loader_discover() {
   local base_dir="$1"
@@ -100,7 +91,6 @@ module_loader_discover() {
 
   log_info "module_loader" "Escaneando módulos en: $base_dir"
 
-  # Buscar todos los manifest.yaml recursivamente
   local manifest
   while IFS= read -r manifest; do
     [ -z "$manifest" ] && continue
@@ -110,14 +100,12 @@ module_loader_discover() {
 
     log_debug "module_loader" "Encontrado manifest: $manifest"
 
-    # Validar el manifest
     if ! _manifest_validate "$manifest" "$module_dir"; then
       log_warn "module_loader" "Módulo rechazado: $module_dir"
       rejected=$((rejected + 1))
       continue
     fi
 
-    # Extraer campos del manifest
     local id name category version criticality requires_root timeout
     id="$(_manifest_get "$manifest" "id")"
     name="$(_manifest_get "$manifest" "name")"
@@ -127,7 +115,6 @@ module_loader_discover() {
     requires_root="$(_manifest_get "$manifest" "requires_root")"
     timeout="$(_manifest_get "$manifest" "timeout_seconds")"
 
-    # Registrar en el registry
     if registry_add "$id" "$name" "$category" "$version" \
                     "$criticality" "$module_dir" "$requires_root" "$timeout"; then
       log_ok "module_loader" "Módulo cargado: ${id} (${category}) v${version}"
@@ -143,10 +130,80 @@ module_loader_discover() {
 }
 
 # =============================================================================
+# _module_execute_isolated <module_id> <module_dir> <evidence_dir> <timeout>
+#
+# Ejecuta diagnose.sh como código SOURCED dentro de un subshell aislado.
+# Esto es deliberado: los módulos cumplen el contrato asignando RESULT_* y
+# usando `return`, por lo que ejecutarlos con `bash diagnose.sh` perdería esas
+# variables al terminar el proceso hijo.
+#
+# El timeout es implementado con primitivas POSIX/Bash disponibles en macOS;
+# no depende del comando GNU `timeout`, que no viene con macOS.
+# =============================================================================
+_module_execute_isolated() {
+  local module_id="$1"
+  local module_dir="$2"
+  local evidence_dir="$3"
+  local timeout_seconds="$4"
+
+  local tmp_base="${TMPDIR:-/tmp}"
+  local output_file
+  output_file="$(mktemp "${tmp_base%/}/meridian_module.XXXXXX")" || return 1
+
+  (
+    source "${MERIDIAN_CORE_DIR}/result_model.sh"
+    source "${MERIDIAN_LOGGING_DIR}/logger.sh"
+
+    export MERIDIAN_MODULE_DIR="$module_dir"
+    export MERIDIAN_EVIDENCE_DIR="$evidence_dir"
+    export MERIDIAN_LOG_FILE="${MERIDIAN_LOG_FILE:-/dev/null}"
+    export MERIDIAN_TEST_MODE="${MERIDIAN_TEST_MODE:-0}"
+    export MERIDIAN_FIXTURE_DIR="${MERIDIAN_FIXTURE_DIR:-}"
+
+    result_init
+    RESULT_MODULE_ID="$module_id"
+    RESULT_MODULE_VERSION="$(_manifest_get "${module_dir}/manifest.yaml" "version")"
+
+    result_time_start
+
+    # source mantiene RESULT_* en este subshell y permite `return` dentro del módulo.
+    # shellcheck source=/dev/null
+    source "${module_dir}/diagnose.sh"
+    local module_rc=$?
+
+    result_time_end
+    RESULT_EXIT_CODE="${RESULT_EXIT_CODE:-$module_rc}"
+
+    result_serialize > "$output_file"
+    exit "$module_rc"
+  ) &
+
+  local pid=$!
+  local elapsed=0
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout_seconds" ] 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$output_file"
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  wait "$pid"
+  local module_rc=$?
+
+  cat "$output_file" 2>/dev/null
+  rm -f "$output_file"
+  return "$module_rc"
+}
+
+# =============================================================================
 # module_loader_run <module_id> <evidence_dir>
-# Ejecuta el diagnose.sh de un módulo en un subshell aislado.
-# El subshell previene que las variables del módulo contaminen el engine.
-# Retorna el resultado serializado en stdout, rc en $?
 # =============================================================================
 module_loader_run() {
   local module_id="$1"
@@ -165,9 +222,7 @@ module_loader_run() {
   timeout="$(registry_get_field "$module_id" 8)"
   timeout="${timeout:-30}"
 
-  # Verificar privilegios
   if ! privilege_check_module "$module_id" "$requires_root"; then
-    # Construir un resultado SKIP para el módulo
     result_init
     RESULT_MODULE_ID="$module_id"
     RESULT_MODULE_VERSION="$(registry_get_field "$module_id" 4)"
@@ -186,75 +241,53 @@ module_loader_run() {
     return 0
   fi
 
-  # Crear directorio de evidencia para el módulo
   local module_evidence_dir="${evidence_dir}/${module_id}"
   mkdir -p "$module_evidence_dir" 2>/dev/null
 
   log_info "module_loader" "Ejecutando módulo: ${module_id} (timeout: ${timeout}s)"
 
-  # Ejecutar en subshell para aislamiento de variables
-  # El subshell hereda las funciones del core via source, pero sus variables
-  # no afectan al shell padre.
   local serialized_result
-  serialized_result="$(
-    # Importar solo las dependencias necesarias dentro del subshell
-    # shellcheck source=/dev/null
-    source "${MERIDIAN_CORE_DIR}/result_model.sh"
-    # shellcheck source=/dev/null
-    source "${MERIDIAN_LOGGING_DIR}/logger.sh"
+  serialized_result="$(_module_execute_isolated \
+    "$module_id" "$module_dir" "$module_evidence_dir" "$timeout")"
+  local rc=$?
 
-    # Variables de entorno para el módulo
-    export MERIDIAN_MODULE_DIR="$module_dir"
-    export MERIDIAN_EVIDENCE_DIR="$module_evidence_dir"
-    export MERIDIAN_LOG_FILE="${MERIDIAN_LOG_FILE:-/dev/null}"
-    export MERIDIAN_TEST_MODE="${MERIDIAN_TEST_MODE:-0}"
-    export MERIDIAN_FIXTURE_DIR="${MERIDIAN_FIXTURE_DIR:-}"
-
+  if [ $rc -eq 124 ]; then
     result_init
     RESULT_MODULE_ID="$module_id"
-    RESULT_MODULE_VERSION="$(grep "^version:" "${module_dir}/manifest.yaml" 2>/dev/null | \
-      sed 's/^version:[[:space:]]*//' | head -1)"
-
-    result_time_start
-
-    # Ejecutar diagnose.sh con timeout
-    # shellcheck source=/dev/null
-    timeout "$timeout" bash "${module_dir}/diagnose.sh" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"
-    local rc=$?
-
-    result_time_end
-
-    if [ $rc -eq 124 ]; then
-      RESULT_STATUS="ERROR"
-      RESULT_SEVERITY="HIGH"
-      RESULT_TITLE="Módulo excedió el tiempo máximo de ejecución"
-      RESULT_DESCRIPTION="El diagnóstico no completó en ${timeout} segundos."
-      RESULT_EXPLANATION="Posible bloqueo esperando recursos del sistema o red."
-      RESULT_RISK="El estado del módulo es desconocido."
-      RESULT_SUGGESTED_ACTION="Reintentar con conectividad de red disponible."
-      RESULT_REPAIRABLE="false"
-      RESULT_REPAIR_RISK="NONE"
-      RESULT_EXIT_CODE="124"
-    elif [ $rc -ne 0 ]; then
-      RESULT_EXIT_CODE="$rc"
-      # Si el módulo falló pero no configuró STATUS, marcar como ERROR
-      if [ "$RESULT_STATUS" = "ERROR" ] && [ "$RESULT_TITLE" = "Diagnóstico no completado" ]; then
-        RESULT_TITLE="Error interno del módulo"
-        RESULT_DESCRIPTION="El módulo terminó con rc=${rc}."
-      fi
-    fi
-
+    RESULT_MODULE_VERSION="$(registry_get_field "$module_id" 4)"
+    RESULT_STATUS="ERROR"
+    RESULT_SEVERITY="HIGH"
+    RESULT_TITLE="Módulo excedió el tiempo máximo de ejecución"
+    RESULT_DESCRIPTION="El diagnóstico no completó en ${timeout} segundos."
+    RESULT_EXPLANATION="Posible bloqueo esperando recursos del sistema o red."
+    RESULT_RISK="El estado del módulo es desconocido."
+    RESULT_SUGGESTED_ACTION="Reintentar y revisar diagnostic.log."
+    RESULT_REPAIRABLE="false"
+    RESULT_REPAIR_RISK="NONE"
+    RESULT_EXIT_CODE="124"
+    RESULT_RAW_OUTPUT=""
     result_serialize
-  )"
-
-  local run_rc=$?
+    return 0
+  fi
 
   if [ -z "$serialized_result" ]; then
-    log_error "module_loader" \
-      "Módulo '${module_id}' no produjo resultado — revisar diagnose.sh"
+    log_error "module_loader" "Módulo '${module_id}' no produjo DiagnosticResult"
     return 1
   fi
 
-  echo "$serialized_result"
-  return $run_rc
+  # Si diagnose.sh terminó con error interno, conservamos su resultado para
+  # evidencia pero marcamos exit_code si el módulo no lo hizo explícitamente.
+  if [ $rc -ne 0 ]; then
+    result_deserialize "$serialized_result"
+    RESULT_STATUS="ERROR"
+    [ "$RESULT_SEVERITY" = "INFO" ] && RESULT_SEVERITY="HIGH"
+    RESULT_EXIT_CODE="$rc"
+    [ "$RESULT_TITLE" = "Diagnóstico no completado" ] || \
+      RESULT_TITLE="${RESULT_TITLE} (error interno rc=${rc})"
+    result_serialize
+    return 0
+  fi
+
+  printf '%s\n' "$serialized_result"
+  return 0
 }
