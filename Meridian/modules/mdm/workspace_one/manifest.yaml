@@ -1,0 +1,15 @@
+id: workspace_one
+name: Workspace ONE Intelligent Hub
+description: Verifica el estado del enrollment MDM y el agente Workspace ONE Intelligent Hub.
+category: mdm
+version: 1.0.0
+author: Apple Platform Team
+criticality: critical
+requires_root: false
+timeout_seconds: 20
+repairable: false
+tags:
+  - mdm
+  - compliance
+  - workspace-one
+  - enrollment

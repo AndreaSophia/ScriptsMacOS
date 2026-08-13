@@ -1,0 +1,15 @@
+id: crowdstrike
+name: CrowdStrike Falcon EDR
+description: Verifica el estado operativo del sensor CrowdStrike Falcon en el equipo.
+category: edr
+version: 1.0.0
+author: Apple Platform Team
+criticality: critical
+requires_root: false
+timeout_seconds: 20
+repairable: false
+tags:
+  - security
+  - edr
+  - endpoint-protection
+  - compliance

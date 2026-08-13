@@ -1,0 +1,14 @@
+id: filevault
+name: FileVault Disk Encryption
+description: Verifica el estado del cifrado de disco FileVault en el equipo.
+category: security
+version: 1.0.0
+author: Apple Platform Team
+criticality: critical
+requires_root: false
+timeout_seconds: 10
+repairable: false
+tags:
+  - security
+  - encryption
+  - compliance

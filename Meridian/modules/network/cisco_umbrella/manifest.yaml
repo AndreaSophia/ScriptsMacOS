@@ -1,0 +1,15 @@
+id: cisco_umbrella
+name: Cisco Umbrella DNS Security
+description: Verifica que el agente Cisco Umbrella esté instalado y activo para protección DNS.
+category: network
+version: 1.0.0
+author: Apple Platform Team
+criticality: high
+requires_root: false
+timeout_seconds: 15
+repairable: false
+tags:
+  - network
+  - dns
+  - security
+  - cisco

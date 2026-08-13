@@ -1,0 +1,36 @@
+# =============================================================================
+# Meridian — config/meridian.yaml
+# Configuración global de la plataforma
+# =============================================================================
+
+version: "1.0.0-mvp"
+org: "Apple Platform Team"
+
+# Directorios
+modules_dir: "modules"
+rules_dir: "rules/definitions"
+
+# Output
+output_base: "${HOME}/Desktop"
+output_prefix: "Meridian"
+
+# Logging
+log_level: "INFO"            # DEBUG | INFO | WARN | ERROR
+audit_log: "${HOME}/.meridian/audit.log"
+
+# Ejecución
+default_timeout_seconds: 30
+max_parallel_modules: 1      # MVP: ejecución secuencial
+
+# Reportes habilitados en el MVP
+reports:
+  - txt
+  - json
+
+# Seguridad
+require_root: true
+module_signature_check: false   # habilitado en producción futura
+
+# TUI
+use_gum: auto                   # auto | true | false
+                                # auto: usa gum si está instalado, degrada si no

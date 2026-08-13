@@ -1,0 +1,15 @@
+id: forcepoint
+name: Forcepoint Web Security Endpoint
+description: Verifica el estado del agente Forcepoint para control de navegación web corporativa.
+category: network
+version: 1.0.0
+author: Apple Platform Team
+criticality: medium
+requires_root: false
+timeout_seconds: 15
+repairable: false
+tags:
+  - network
+  - web-security
+  - dlp
+  - forcepoint

@@ -1,0 +1,53 @@
+# =============================================================================
+# Meridian — rules/definitions/security.rules.yaml
+# Reglas para módulos de seguridad: filevault, certificates
+# Formato: un bloque por regla, separados por "---"
+# =============================================================================
+
+rule_id: filevault_disabled
+condition_module: filevault
+condition_field: status
+condition_operator: equals
+condition_value: FAIL
+result_severity: CRITICAL
+result_explanation: "FileVault es el único mecanismo que protege los datos en reposo ante acceso físico. Sin él, cualquier persona con acceso físico al equipo puede leer todos los archivos arrancando desde un medio externo o extrayendo el disco."
+result_risk: "Datos corporativos, credenciales y documentos confidenciales accesibles sin autenticación. Incumplimiento de PCI-DSS, SOC2 y política de seguridad corporativa."
+result_suggested_action: "Habilitar FileVault desde Preferencias del Sistema > Privacidad y Seguridad > FileVault. Guardar la clave de recuperación en el portal corporativo."
+result_repairable: false
+result_repair_risk: NONE
+---
+rule_id: filevault_unknown_state
+condition_module: filevault
+condition_field: status
+condition_operator: equals
+condition_value: WARN
+result_severity: MEDIUM
+result_explanation: "FileVault puede estar en proceso de cifrado inicial o descifrado. Durante este proceso la protección no es completa."
+result_risk: "Estado de protección del disco indeterminado durante la transición."
+result_suggested_action: "Esperar a que el proceso de FileVault complete. Verificar el progreso en Preferencias del Sistema."
+result_repairable: false
+result_repair_risk: NONE
+---
+rule_id: certificates_expired
+condition_module: certificates
+condition_field: status
+condition_operator: equals
+condition_value: FAIL
+result_severity: HIGH
+result_explanation: "Los certificados expirados causan fallos de autenticación en servicios TLS, WiFi 802.1X y VPN. Los navegadores y clientes corporativos rechazan conexiones firmadas con CAs expiradas."
+result_risk: "Posibles interrupciones en acceso a servicios corporativos, VPN y WiFi. Errores de autenticación silenciosos que afectan productividad."
+result_suggested_action: "Renovar los certificados desde el portal PKI corporativo. Contactar al equipo de seguridad si los certificados son gestionados centralmente."
+result_repairable: false
+result_repair_risk: NONE
+---
+rule_id: certificates_expiring_soon
+condition_module: certificates
+condition_field: status
+condition_operator: equals
+condition_value: WARN
+result_severity: MEDIUM
+result_explanation: "Certificados próximos a expirar deben renovarse con anticipación para evitar interrupciones de servicio."
+result_risk: "Riesgo de interrupción de servicios al expirar los certificados si no se renuevan a tiempo."
+result_suggested_action: "Iniciar el proceso de renovación de certificados con el equipo de PKI antes de la fecha de expiración."
+result_repairable: false
+result_repair_risk: NONE

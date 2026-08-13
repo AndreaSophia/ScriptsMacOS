@@ -1,0 +1,52 @@
+# =============================================================================
+# Meridian — rules/definitions/network.rules.yaml
+# Reglas para módulos de red: cisco_umbrella, forcepoint
+# =============================================================================
+
+rule_id: crowdstrike_not_installed
+condition_module: crowdstrike
+condition_field: status
+condition_operator: equals
+condition_value: FAIL
+result_severity: CRITICAL
+result_explanation: "CrowdStrike Falcon es el agente EDR corporativo. Sin él el endpoint opera sin detección de amenazas en tiempo real, sin visibilidad de procesos y sin capacidad de respuesta ante incidentes."
+result_risk: "Endpoint completamente expuesto a malware, ransomware y ataques dirigidos sin capacidad de detección ni respuesta. Incumplimiento severo de política de seguridad."
+result_suggested_action: "Instalar el sensor Falcon mediante Workspace ONE o Jamf. Si el sensor está instalado pero no responde, contactar al equipo de seguridad para diagnóstico remoto."
+result_repairable: false
+result_repair_risk: NONE
+---
+rule_id: crowdstrike_rfm
+condition_module: crowdstrike
+condition_field: status
+condition_operator: equals
+condition_value: WARN
+result_severity: HIGH
+result_explanation: "El modo RFM (Reduced Functionality Mode) indica que el sensor no puede comunicarse correctamente con la consola Falcon o tiene un problema de configuración. La protección es significativamente menor."
+result_risk: "Cobertura EDR reducida. Posibles eventos de seguridad no detectados ni reportados a la consola."
+result_suggested_action: "Verificar conectividad con ts01-b.cloudsink.net y cloud.crowdstrike.com. Revisar la consola Falcon para detalles del sensor y aplicar corrección remota si es posible."
+result_repairable: false
+result_repair_risk: NONE
+---
+rule_id: umbrella_not_running
+condition_module: cisco_umbrella
+condition_field: status
+condition_operator: equals
+condition_value: FAIL
+result_severity: HIGH
+result_explanation: "Cisco Umbrella proporciona protección DNS que bloquea dominios maliciosos, C2 de malware y phishing antes de que se establezca cualquier conexión de red. Sin el agente activo, esta protección no opera."
+result_risk: "Tráfico DNS sin filtrado corporativo. El equipo puede resolver dominios maliciosos, de C2 o de phishing sin restricción."
+result_suggested_action: "Reiniciar el servicio Umbrella o reinstalar el agente desde Workspace ONE. Verificar que el LaunchDaemon esté habilitado."
+result_repairable: false
+result_repair_risk: NONE
+---
+rule_id: forcepoint_not_running
+condition_module: forcepoint
+condition_field: status
+condition_operator: equals
+condition_value: FAIL
+result_severity: MEDIUM
+result_explanation: "Forcepoint controla el acceso web según las políticas corporativas. Sin el agente, los usuarios pueden acceder a sitios no permitidos y el tráfico web no es auditado."
+result_risk: "Navegación web sin filtrado corporativo. Posible acceso a contenido no permitido y pérdida de trazabilidad de navegación."
+result_suggested_action: "Reiniciar el equipo o reinstalar el agente Forcepoint desde Workspace ONE."
+result_repairable: false
+result_repair_risk: NONE

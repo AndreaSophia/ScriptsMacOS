@@ -1,0 +1,48 @@
+# =============================================================================
+# Meridian — config/severity_levels.yaml
+# Define el significado de cada nivel de severidad
+# =============================================================================
+
+severity_levels:
+
+  INFO:
+    label: "Información"
+    color: "cyan"
+    icon: "ℹ"
+    description: "Dato informativo. No requiere acción."
+    priority: 0
+
+  LOW:
+    label: "Bajo"
+    color: "blue"
+    icon: "▽"
+    description: "Condición que puede mejorarse. Sin riesgo inmediato."
+    priority: 1
+
+  MEDIUM:
+    label: "Medio"
+    color: "yellow"
+    icon: "△"
+    description: "Condición que debe corregirse pronto. Riesgo operacional."
+    priority: 2
+
+  HIGH:
+    label: "Alto"
+    color: "orange"
+    icon: "▲"
+    description: "Condición que debe corregirse hoy. Riesgo significativo."
+    priority: 3
+
+  CRITICAL:
+    label: "Crítico"
+    color: "red"
+    icon: "■"
+    description: "Condición que requiere atención inmediata. Riesgo severo."
+    priority: 4
+
+status_labels:
+  PASS:  "✓ Correcto"
+  WARN:  "! Advertencia"
+  FAIL:  "✗ Falló"
+  SKIP:  "– Omitido"
+  ERROR: "⚡ Error"

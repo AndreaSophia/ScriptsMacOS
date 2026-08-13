@@ -1,0 +1,3 @@
+Sensor version: 7.14.17611.0
+Sensor state: Running
+Sensor operational: true

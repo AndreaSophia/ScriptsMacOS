@@ -1,0 +1,29 @@
+# =============================================================================
+# Meridian — rules/definitions/compliance.rules.yaml
+# Reglas de compliance que combinan señales de múltiples módulos.
+# En el MVP cada regla aplica a un módulo individual.
+# =============================================================================
+
+rule_id: mdm_not_enrolled
+condition_module: workspace_one
+condition_field: status
+condition_operator: equals
+condition_value: FAIL
+result_severity: CRITICAL
+result_explanation: "Un equipo no enrollado en MDM no recibe políticas de seguridad, certificados corporativos, aplicaciones gestionadas ni actualizaciones de configuración. Está fuera del perímetro de gestión corporativa."
+result_risk: "Incumplimiento completo de política de seguridad corporativa. El equipo no puede ser gestionado, bloqueado ni borrado remotamente en caso de pérdida o robo."
+result_suggested_action: "Contactar al equipo de soporte Apple para iniciar el proceso de enrollment. En caso de equipo nuevo, verificar que fue asignado correctamente en el portal de Apple Business Manager."
+result_repairable: false
+result_repair_risk: NONE
+---
+rule_id: mdm_hub_missing
+condition_module: workspace_one
+condition_field: status
+condition_operator: equals
+condition_value: WARN
+result_severity: MEDIUM
+result_explanation: "El enrollment MDM está activo pero sin el Intelligent Hub el equipo pierde acceso al catálogo de aplicaciones corporativas y a ciertas funciones de self-service."
+result_risk: "Funcionalidad MDM reducida. Sin acceso a aplicaciones y recursos corporativos a través del Hub."
+result_suggested_action: "Instalar Workspace ONE Intelligent Hub desde el portal de empresa o mediante el enlace de enrollment corporativo."
+result_repairable: false
+result_repair_risk: NONE

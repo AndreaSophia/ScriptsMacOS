@@ -1,0 +1,15 @@
+id: certificates
+name: Certificates & Trust Store
+description: Verifica certificados corporativos instalados y su vigencia en el keychain del sistema.
+category: security
+version: 1.0.0
+author: Apple Platform Team
+criticality: high
+requires_root: false
+timeout_seconds: 15
+repairable: false
+tags:
+  - security
+  - certificates
+  - pki
+  - compliance
