@@ -36,11 +36,13 @@ done
 _udid="$(system_profiler SPHardwareDataType 2>/dev/null | \
   awk -F': ' '/Provisioning UDID/{gsub(/^[[:space:]]+/,"",$2); print $2; exit}')"
 [ -z "$_udid" ] && _udid="$(ioreg -d2 -c IOPlatformExpertDevice 2>/dev/null | \
-  awk -F'"' '/IOPlatformUUID/{print $4}')"
+  awk -F'"' '/IOPlatformUUID/{print $4; exit}')"
 
-# Perfiles instalados
+# Perfiles instalados. grep -c imprime 0 y retorna rc=1 cuando no hay coincidencias;
+# combinarlo con `|| echo 0` generaba "0\n0". awk entrega siempre un único entero.
 _profile_count="$(profiles list -all 2>/dev/null | \
-  grep -c 'profileIdentifier' 2>/dev/null || echo "0")"
+  awk '/profileIdentifier/{count++} END{print count+0}')"
+_profile_count="${_profile_count:-0}"
 
 # Guardar evidencia
 {
@@ -72,7 +74,8 @@ _profile_count="$(profiles list -all 2>/dev/null | \
 
 # --- Determinar estado ---
 _enrolled=false
-echo "$_enrollment_output" | grep -qi "MDM enrollment: Yes\|enrolled.*Yes\|Yes.*enrolled" && \
+printf '%s\n' "$_enrollment_output" | \
+  grep -qiE 'MDM enrollment:[[:space:]]*Yes|enrolled[^[:alnum:]]*Yes|Yes[^[:alnum:]]*enrolled' && \
   _enrolled=true
 
 RESULT_RAW_OUTPUT="enrolled=${_enrolled} app=${_ws1_app:-none} ver=${_ws1_ver:-N/A} profiles=${_profile_count} udid=${_udid:-none}"
