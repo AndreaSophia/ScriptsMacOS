@@ -5,10 +5,6 @@
 # Principio: mínimo privilegio — cada módulo declara lo que necesita.
 # =============================================================================
 
-# =============================================================================
-# privilege_check_root — Verifica que el proceso corre como root
-# Retorna 0 si es root, 1 si no
-# =============================================================================
 privilege_check_root() {
   if [ "${EUID:-$(id -u 2>/dev/null)}" -eq 0 ]; then
     return 0
@@ -16,9 +12,6 @@ privilege_check_root() {
   return 1
 }
 
-# =============================================================================
-# privilege_require_root — Aborta con mensaje claro si no hay root
-# =============================================================================
 privilege_require_root() {
   if ! privilege_check_root; then
     printf "\n"
@@ -28,11 +21,6 @@ privilege_require_root() {
   fi
 }
 
-# =============================================================================
-# privilege_check_module <module_id> <requires_root>
-# Verifica si el módulo puede ejecutarse con los privilegios actuales.
-# Retorna 0 si puede ejecutarse, 1 si no.
-# =============================================================================
 privilege_check_module() {
   local module_id="$1"
   local requires_root="$2"
@@ -46,12 +34,9 @@ privilege_check_module() {
   return 0
 }
 
-# =============================================================================
-# privilege_check_repair <repair_risk>
-# Verifica que el nivel de riesgo de una reparación es aceptable.
-# En el MVP: solo permite reparaciones LOW y MEDIUM.
-# CRITICAL está bloqueado por política del MVP.
-# =============================================================================
+# En el MVP solo LOW y MEDIUM son ejecutables.
+# HIGH y CRITICAL quedan bloqueados hasta que exista una política explícita
+# de reparación avanzada y cobertura de tests suficiente.
 privilege_check_repair() {
   local repair_risk="$1"
 
@@ -60,13 +45,13 @@ privilege_check_repair() {
       return 0
       ;;
     HIGH)
-      log_warn "privilege_manager" \
-        "Reparación de riesgo HIGH requiere confirmación explícita adicional."
-      return 0
+      log_error "privilege_manager" \
+        "Reparaciones de riesgo HIGH están bloqueadas en el MVP."
+      return 1
       ;;
     CRITICAL)
       log_error "privilege_manager" \
-        "Reparaciones de riesgo CRITICAL están bloqueadas en esta versión."
+        "Reparaciones de riesgo CRITICAL están bloqueadas en el MVP."
       return 1
       ;;
     *)
@@ -77,9 +62,6 @@ privilege_check_repair() {
   esac
 }
 
-# =============================================================================
-# privilege_get_current_user — Retorna el usuario real (no root) detrás del sudo
-# =============================================================================
 privilege_get_current_user() {
   if [ -n "${SUDO_USER:-}" ]; then
     echo "$SUDO_USER"
