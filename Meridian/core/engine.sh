@@ -7,6 +7,12 @@ engine_init() {
   export MERIDIAN_CORE_DIR="${MERIDIAN_ROOT}/core"
   export MERIDIAN_LOGGING_DIR="${MERIDIAN_ROOT}/logging"
   mkdir -p "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null || { echo "[FATAL] No se pudo crear: $output_dir" >&2; exit 1; }
+
+  # Cada ejecución es una sesión independiente. Evita que un segundo run en el
+  # mismo shell herede módulos o resultados de una sesión anterior.
+  registry_reset
+  aggregator_reset
+
   logger_init "${output_dir}/diagnostic.log"
   log_step "Inicializando Meridian v${MERIDIAN_VERSION}"
   log_step "Cargando módulos"; module_loader_discover "${MERIDIAN_ROOT}/modules"
@@ -28,8 +34,9 @@ _engine_run_module() {
   module_name="$(registry_get_field "$module_id" 2)"
   log_info "engine" "▷ ${module_name} (${module_id})"
 
-  # module_loader emits user-facing logs on stdout. Capture only the final
-  # DiagnosticResult line; forward preceding lines to stderr for visibility.
+  # El DiagnosticResult viaja por stdout del loader. Si hubiese salida humana
+  # adicional, solo la última línea se interpreta como dato y el resto se
+  # reenvía a stderr.
   local tmp_base="${TMPDIR:-/tmp}" capture
   capture="$(mktemp "${tmp_base%/}/meridian_engine.XXXXXX")" || return 1
   module_loader_run "$module_id" "$MERIDIAN_EVIDENCE_DIR" >"$capture"
