@@ -10,11 +10,14 @@
 # Opciones:
 #   --module <id>    Ejecutar un módulo específico
 #   --category <cat> Ejecutar todos los módulos de una categoría
-#   --all            Ejecutar todos los módulos (default)
+#   --all            Ejecutar todos los módulos sin menú interactivo
 #   --test           Modo test con fixtures (sin llamadas al sistema real)
 #   --debug          Logs detallados
 #   --no-report      No generar reportes (solo mostrar en pantalla)
 #   --help           Mostrar esta ayuda
+#
+# Sin selector explícito, Meridian usa menú si stdin es interactivo y ejecuta
+# todos los módulos si se invoca desde un contexto headless.
 #
 # Compatibilidad:
 #   macOS Sonoma (14) | Sequoia (15) | Tahoe (16)
@@ -69,7 +72,8 @@ _load_core() {
 _parse_args() {
   _OPT_MODULES=()
   _OPT_CATEGORY=""
-  _OPT_ALL=true
+  _OPT_ALL=false
+  _OPT_INTERACTIVE=true
   _OPT_REPORT=true
   export MERIDIAN_DEBUG=0
   export MERIDIAN_TEST_MODE=0
@@ -80,7 +84,8 @@ _parse_args() {
       --module)
         [ $# -ge 2 ] || { echo "[ERROR] --module requiere un ID de módulo" >&2; return 2; }
         [ -z "$_OPT_CATEGORY" ] || { echo "[ERROR] --module y --category no se pueden combinar" >&2; return 2; }
-        _OPT_ALL=false
+        [ "$_OPT_ALL" = "false" ] || { echo "[ERROR] --module y --all no se pueden combinar" >&2; return 2; }
+        _OPT_INTERACTIVE=false
         _OPT_MODULES+=("$2")
         shift 2
         ;;
@@ -88,7 +93,8 @@ _parse_args() {
         [ $# -ge 2 ] || { echo "[ERROR] --category requiere una categoría" >&2; return 2; }
         [ ${#_OPT_MODULES[@]} -eq 0 ] || { echo "[ERROR] --category y --module no se pueden combinar" >&2; return 2; }
         [ -z "$_OPT_CATEGORY" ] || { echo "[ERROR] --category solo puede especificarse una vez" >&2; return 2; }
-        _OPT_ALL=false
+        [ "$_OPT_ALL" = "false" ] || { echo "[ERROR] --category y --all no se pueden combinar" >&2; return 2; }
+        _OPT_INTERACTIVE=false
         _OPT_CATEGORY="$2"
         shift 2
         ;;
@@ -98,6 +104,7 @@ _parse_args() {
           return 2
         }
         _OPT_ALL=true
+        _OPT_INTERACTIVE=false
         shift
         ;;
       --test)
@@ -139,11 +146,15 @@ USO:
 OPCIONES:
   --module <id>    Ejecutar módulo específico (se puede repetir)
   --category <cat> Ejecutar categoría (security, edr, mdm, network)
-  --all            Ejecutar todos los módulos (default)
+  --all            Ejecutar todos los módulos sin menú interactivo
   --test           Modo test — usa fixtures sin llamar al sistema real
   --debug          Logs detallados
   --no-report      Solo pantalla, sin generar archivos de reporte
   --help           Esta ayuda
+
+COMPORTAMIENTO SIN SELECTOR:
+  Terminal interactivo   → muestra menú de módulos
+  Workspace ONE/SSH/MDM  → ejecuta todos los módulos sin esperar entrada
 
 MÓDULOS DISPONIBLES:
   filevault        FileVault Disk Encryption
@@ -155,10 +166,11 @@ MÓDULOS DISPONIBLES:
 
 EJEMPLOS:
   sudo meridian
+  sudo meridian --all
   sudo meridian --module crowdstrike
   sudo meridian --module filevault --module certificates
   sudo meridian --category security
-  sudo meridian --test --debug
+  sudo meridian --all --test --debug
 
 SALIDA:
   ~/Desktop/Meridian_<hostname>_<timestamp>/
@@ -229,6 +241,13 @@ main() {
   _load_core
   _parse_args "$@"
 
+  # Una invocación sin selector desde MDM/launchd/SSH no debe bloquearse en
+  # `read`. Conservamos el menú como experiencia por defecto solo en terminal.
+  if [ "$_OPT_INTERACTIVE" = "true" ] && [ ! -t 0 ]; then
+    _OPT_INTERACTIVE=false
+    _OPT_ALL=true
+  fi
+
   # El MVP conserva ejecución privilegiada desde el entrypoint. Los checks por
   # módulo siguen existiendo como defensa adicional y para reutilizar el core.
   privilege_require_root
@@ -238,23 +257,20 @@ main() {
 
   tui_banner
 
-  # Inicializar siempre a través del engine. El flujo interactivo anterior
-  # cargaba registry/rules a mano y dejaba MERIDIAN_EVIDENCE_DIR y rutas del
-  # core sin definir antes de engine_run.
+  # Inicializar siempre a través del engine.
   engine_init "$output_dir"
 
   local selected_modules=() id menu_selection
 
-  if [ "$_OPT_ALL" = "true" ] && [ ${#_OPT_MODULES[@]} -eq 0 ] && [ -z "$_OPT_CATEGORY" ]; then
+  if [ "$_OPT_INTERACTIVE" = "true" ]; then
     menu_selection="$(tui_menu_main)"
 
     if [ "$menu_selection" != "all" ] && [ -n "$menu_selection" ]; then
-      _OPT_ALL=false
       for id in $menu_selection; do
         selected_modules+=("$id")
       done
     fi
-  else
+  elif [ "$_OPT_ALL" = "false" ]; then
     while IFS= read -r id; do
       [ -n "$id" ] && selected_modules+=("$id")
     done < <(_resolve_modules)
