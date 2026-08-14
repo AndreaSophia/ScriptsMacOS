@@ -106,6 +106,10 @@ module_loader_discover() {
 # Ejecuta diagnose.sh como source dentro de un subshell. El canal de datos
 # (DiagnosticResult) viaja por un archivo separado de stdout, para que cualquier
 # printf/echo del módulo no pueda corromper la serialización.
+#
+# IMPORTANTE: Meridian usa `set -e` en el entrypoint. Todo retorno no-cero que
+# forme parte del protocolo de un módulo se captura dentro de un `if`; así
+# errexit no puede abortar la sesión antes de serializar el DiagnosticResult.
 _module_execute_isolated() {
   local module_id="$1" module_dir="$2" evidence_dir="$3" timeout_seconds="$4"
   local tmp_base="${TMPDIR:-/tmp}" result_file stdout_file
@@ -131,8 +135,12 @@ _module_execute_isolated() {
     RESULT_MODULE_VERSION="$(_manifest_get "${module_dir}/manifest.yaml" version)"
 
     result_time_start
-    source "${module_dir}/diagnose.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"
-    local module_rc=$?
+    local module_rc
+    if source "${module_dir}/diagnose.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
+      module_rc=0
+    else
+      module_rc=$?
+    fi
     result_time_end
 
     if [ "$module_rc" -ne 0 ] && [ "${RESULT_EXIT_CODE:-0}" -eq 0 ] 2>/dev/null; then
@@ -158,8 +166,11 @@ _module_execute_isolated() {
     elapsed=$((elapsed + 1))
   done
 
-  wait "$pid"
-  module_rc=$?
+  if wait "$pid"; then
+    module_rc=0
+  else
+    module_rc=$?
+  fi
 
   [ -s "$stdout_file" ] && cat "$stdout_file" >&2
   cat "$result_file" 2>/dev/null
@@ -204,8 +215,11 @@ module_loader_run() {
   mkdir -p "$module_evidence_dir" 2>/dev/null
   log_info "module_loader" "Ejecutando módulo: ${module_id} (timeout: ${timeout}s)"
 
-  serialized_result="$(_module_execute_isolated "$module_id" "$module_dir" "$module_evidence_dir" "$timeout")"
-  rc=$?
+  if serialized_result="$(_module_execute_isolated "$module_id" "$module_dir" "$module_evidence_dir" "$timeout")"; then
+    rc=0
+  else
+    rc=$?
+  fi
 
   if [ "$rc" -eq 124 ]; then
     result_init
