@@ -68,8 +68,22 @@ _default_audit_log() {
   fi
 }
 
+# Audit es un formato de un registro por línea separado por '|'. Codificamos
+# contenido antes de escribirlo para que valores controlados por módulos no
+# puedan inyectar columnas ni registros adicionales. El orden importa: primero
+# '%' para que la decodificación futura pueda ser reversible.
+_audit_encode() {
+  local s="$1"
+  s="${s//%/%25}"
+  s="${s//|/%7C}"
+  s="${s//$'\r'/%0D}"
+  s="${s//$'\n'/%0A}"
+  printf '%s' "$s"
+}
+
 log_audit() {
   local component="$1" action="$2" detail="$3" ts operator hostname audit_log audit_dir
+  local operator_safe hostname_safe component_safe action_safe detail_safe
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   operator="${SUDO_USER:-$(whoami 2>/dev/null || echo 'unknown')}"
   hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
@@ -86,8 +100,14 @@ log_audit() {
     chmod 750 "$audit_dir" 2>/dev/null || true
   fi
 
+  operator_safe="$(_audit_encode "$operator")"
+  hostname_safe="$(_audit_encode "$hostname")"
+  component_safe="$(_audit_encode "$component")"
+  action_safe="$(_audit_encode "$action")"
+  detail_safe="$(_audit_encode "$detail")"
+
   printf '%s|AUDIT|%s|%s|%s|%s|%s\n' \
-    "$ts" "$operator" "$hostname" "$component" "$action" "$detail" \
+    "$ts" "$operator_safe" "$hostname_safe" "$component_safe" "$action_safe" "$detail_safe" \
     >> "$audit_log" 2>/dev/null || {
       _log_write "ERROR" "logger" "No se pudo escribir audit log: $audit_log"
       return 1
