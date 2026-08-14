@@ -96,6 +96,11 @@ registry_count() {
   printf '%s\n' "$_REGISTRY_COUNT"
 }
 
+registry_reset() {
+  _REGISTRY=""
+  _REGISTRY_COUNT=0
+}
+
 registry_print() {
   local line id category version criticality
   printf "\n  %-30s %-12s %-10s %-10s\n" "MÓDULO" "CATEGORÍA" "VERSIÓN" "CRITICIDAD"
