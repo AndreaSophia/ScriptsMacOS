@@ -15,8 +15,11 @@ _manifest_get() {
 
 _manifest_validate() {
   local manifest="$1" module_dir="$2" errors=0 field val
+  local id name description category version author criticality requires_root timeout repairable
 
-  for field in id name category version criticality requires_root timeout_seconds; do
+  # Mantener el runtime alineado con contracts/IModule.md. Estos campos son
+  # parte del contrato, no meras recomendaciones de documentación.
+  for field in id name description category version author criticality requires_root timeout_seconds; do
     val="$(_manifest_get "$manifest" "$field")"
     if [ -z "$val" ]; then
       log_warn "module_loader" "Manifest inválido en '$(basename "$module_dir")': campo '$field' faltante"
@@ -24,42 +27,105 @@ _manifest_validate() {
     fi
   done
 
-  if [ ! -f "${module_dir}/diagnose.sh" ]; then
-    log_warn "module_loader" "Módulo '$(basename "$module_dir")': falta diagnose.sh"
+  id="$(_manifest_get "$manifest" id)"
+  name="$(_manifest_get "$manifest" name)"
+  description="$(_manifest_get "$manifest" description)"
+  category="$(_manifest_get "$manifest" category)"
+  version="$(_manifest_get "$manifest" version)"
+  author="$(_manifest_get "$manifest" author)"
+  criticality="$(_manifest_get "$manifest" criticality)"
+  requires_root="$(_manifest_get "$manifest" requires_root)"
+  timeout="$(_manifest_get "$manifest" timeout_seconds)"
+  repairable="$(_manifest_get "$manifest" repairable)"
+
+  # id: snake_case y consistente con el nombre del directorio. El registry
+  # depende de IDs deterministas; aceptar aliases silenciosos hace ambiguo el
+  # lookup de módulos, reglas y reparaciones.
+  if [ -n "$id" ]; then
+    printf '%s\n' "$id" | grep -qE '^[a-z][a-z0-9_]*$' || {
+      log_warn "module_loader" "Módulo '$(basename "$module_dir")': id='$id' no es snake_case válido"
+      errors=$((errors + 1))
+    }
+    if [ "$id" != "$(basename "$module_dir")" ]; then
+      log_warn "module_loader" "Módulo '$(basename "$module_dir")': id='$id' no coincide con el directorio"
+      errors=$((errors + 1))
+    fi
+  fi
+
+  if [ -n "$name" ] && [ "${#name}" -gt 60 ]; then
+    log_warn "module_loader" "Módulo '$id': name excede 60 caracteres"
+    errors=$((errors + 1))
+  fi
+  if [ -n "$description" ] && [ "${#description}" -gt 200 ]; then
+    log_warn "module_loader" "Módulo '$id': description excede 200 caracteres"
     errors=$((errors + 1))
   fi
 
-  local repairable
-  repairable="$(_manifest_get "$manifest" repairable)"
+  case "$category" in
+    security|edr|mdm|network|storage|performance|system|apps|developer) ;;
+    *)
+      log_warn "module_loader" "Módulo '$id': category='$category' no válida"
+      errors=$((errors + 1))
+      ;;
+  esac
+
+  # El contrato MVP usa semver estricto X.Y.Z para módulos.
+  printf '%s\n' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+    log_warn "module_loader" "Módulo '$id': version='$version' no cumple semver X.Y.Z"
+    errors=$((errors + 1))
+  }
+
+  case "$criticality" in low|medium|high|critical) ;; *)
+    log_warn "module_loader" "Módulo '$id': criticality='$criticality' no válido"
+    errors=$((errors + 1));;
+  esac
+
+  case "$requires_root" in true|false) ;; *)
+    log_warn "module_loader" "Módulo '$id': requires_root='$requires_root' no válido"
+    errors=$((errors + 1));;
+  esac
+
+  printf '%s\n' "$timeout" | grep -qE '^[1-9][0-9]*$' || {
+    log_warn "module_loader" "Módulo '$id': timeout_seconds='$timeout' no válido"
+    errors=$((errors + 1))
+  }
+
+  # repairable es opcional por compatibilidad; ausencia equivale a false.
+  case "$repairable" in
+    true|false|"") ;;
+    *)
+      log_warn "module_loader" "Módulo '$id': repairable='$repairable' no válido"
+      errors=$((errors + 1))
+      ;;
+  esac
+
+  if [ ! -f "${module_dir}/diagnose.sh" ]; then
+    log_warn "module_loader" "Módulo '$id': falta diagnose.sh"
+    errors=$((errors + 1))
+  fi
+
   if [ "$repairable" = "true" ]; then
     if [ ! -f "${module_dir}/repair.sh" ]; then
-      log_warn "module_loader" "Módulo '$(basename "$module_dir")': manifest dice repairable=true pero falta repair.sh"
+      log_warn "module_loader" "Módulo '$id': manifest dice repairable=true pero falta repair.sh"
       errors=$((errors + 1))
     fi
     if [ ! -f "${module_dir}/validate.sh" ]; then
-      log_warn "module_loader" "Módulo '$(basename "$module_dir")': tiene repair.sh pero falta validate.sh"
+      log_warn "module_loader" "Módulo '$id': repairable=true pero falta validate.sh"
+      errors=$((errors + 1))
+    fi
+  else
+    if [ -f "${module_dir}/repair.sh" ]; then
+      log_warn "module_loader" "Módulo '$id': repair.sh presente pero repairable no es true"
       errors=$((errors + 1))
     fi
   fi
 
-  local criticality requires_root timeout
-  criticality="$(_manifest_get "$manifest" criticality)"
-  case "$criticality" in low|medium|high|critical) ;; *)
-    log_warn "module_loader" "Módulo '$(basename "$module_dir")': criticality='$criticality' no válido"
-    errors=$((errors + 1));;
-  esac
-
-  requires_root="$(_manifest_get "$manifest" requires_root)"
-  case "$requires_root" in true|false) ;; *)
-    log_warn "module_loader" "Módulo '$(basename "$module_dir")': requires_root='$requires_root' no válido"
-    errors=$((errors + 1));;
-  esac
-
-  timeout="$(_manifest_get "$manifest" timeout_seconds)"
-  printf '%s\n' "$timeout" | grep -qE '^[1-9][0-9]*$' || {
-    log_warn "module_loader" "Módulo '$(basename "$module_dir")': timeout_seconds='$timeout' no válido"
+  # IModule exige validate.sh siempre que exista repair.sh, independientemente
+  # de cómo haya sido declarado el manifest.
+  if [ -f "${module_dir}/repair.sh" ] && [ ! -f "${module_dir}/validate.sh" ]; then
+    log_warn "module_loader" "Módulo '$id': repair.sh presente pero falta validate.sh"
     errors=$((errors + 1))
-  }
+  fi
 
   [ "$errors" -eq 0 ]
 }
