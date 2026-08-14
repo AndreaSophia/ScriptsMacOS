@@ -1,152 +1,112 @@
 #!/bin/bash
 # =============================================================================
 # Meridian — logging/logger.sh
-# Responsabilidad: API centralizada de logging. Todos los componentes usan
-# estas funciones. Nadie escribe a logs directamente.
-#
-# Niveles: DEBUG < INFO < WARN < ERROR < AUDIT
-# AUDIT es especial: siempre se escribe, nunca se filtra, es append-only.
+# API centralizada de logging.
 # =============================================================================
 
-# Variables que el caller debe haber definido antes de usar el logger:
-#   MERIDIAN_LOG_FILE  — ruta al archivo diagnostic.log de esta ejecución
-#   MERIDIAN_AUDIT_LOG — ruta al audit.log (por defecto en ~/.meridian/audit.log)
-#   MERIDIAN_DEBUG     — "1" para activar logs DEBUG en consola
-
-# Colores — solo si stdout es terminal interactiva
 if [ -t 1 ]; then
-  _L_RST='\033[0m';    _L_BOLD='\033[1m'
-  _L_CYAN='\033[0;36m';  _L_BCYAN='\033[1;36m'
-  _L_GREEN='\033[0;32m'; _L_BGREEN='\033[1;32m'
-  _L_YELLOW='\033[0;33m'; _L_RED='\033[0;31m'
-  _L_GRAY='\033[0;90m';  _L_WHITE='\033[1;37m'
-  _L_MAGENTA='\033[0;35m'
+  _L_RST='\033[0m'; _L_BOLD='\033[1m'; _L_CYAN='\033[0;36m'; _L_BCYAN='\033[1;36m'
+  _L_GREEN='\033[0;32m'; _L_BGREEN='\033[1;32m'; _L_YELLOW='\033[0;33m'; _L_RED='\033[0;31m'
+  _L_GRAY='\033[0;90m'; _L_WHITE='\033[1;37m'; _L_MAGENTA='\033[0;35m'
 else
-  _L_RST=''; _L_BOLD=''; _L_CYAN=''; _L_BCYAN=''
-  _L_GREEN=''; _L_BGREEN=''; _L_YELLOW=''; _L_RED=''
-  _L_GRAY=''; _L_WHITE=''; _L_MAGENTA=''
+  _L_RST=''; _L_BOLD=''; _L_CYAN=''; _L_BCYAN=''; _L_GREEN=''; _L_BGREEN=''
+  _L_YELLOW=''; _L_RED=''; _L_GRAY=''; _L_WHITE=''; _L_MAGENTA=''
 fi
 
-# =============================================================================
-# _log_write <level> <component> <message>
-# Función base — no llamar directamente, usar las funciones públicas
-# =============================================================================
 _log_write() {
-  local level="$1"
-  local component="$2"
-  local msg="$3"
-  local ts
+  local level="$1" component="$2" msg="$3" ts
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-
-  # Escribir al archivo de log de la sesión
   if [ -n "${MERIDIAN_LOG_FILE:-}" ]; then
     printf '%s [%-5s] [%s] %s\n' "$ts" "$level" "$component" "$msg" \
-      >> "${MERIDIAN_LOG_FILE}" 2>/dev/null
+      >> "${MERIDIAN_LOG_FILE}" 2>/dev/null || true
   fi
 }
 
-# =============================================================================
-# log_debug <component> <message>
-# Solo visible en consola cuando MERIDIAN_DEBUG=1
-# =============================================================================
 log_debug() {
-  local component="$1"
-  local msg="$2"
+  local component="$1" msg="$2"
   _log_write "DEBUG" "$component" "$msg"
   if [ "${MERIDIAN_DEBUG:-0}" = "1" ]; then
-    printf "  ${_L_GRAY}[D] [%s] %s${_L_RST}\n" "$component" "$msg"
+    printf "  ${_L_GRAY}[D] [%s] %s${_L_RST}\n" "$component" "$msg" >&2
   fi
 }
 
-# =============================================================================
-# log_info <component> <message>
-# =============================================================================
 log_info() {
-  local component="$1"
-  local msg="$2"
-  _log_write "INFO " "$component" "$msg"
-  printf "  ${_L_CYAN}·${_L_RST}  [%s] %s\n" "$component" "$msg"
+  local component="$1" msg="$2"
+  _log_write "INFO" "$component" "$msg"
+  printf "  ${_L_CYAN}·${_L_RST}  [%s] %s\n" "$component" "$msg" >&2
 }
 
-# =============================================================================
-# log_ok <component> <message>
-# =============================================================================
 log_ok() {
-  local component="$1"
-  local msg="$2"
-  _log_write "OK   " "$component" "$msg"
-  printf "  ${_L_BGREEN}✓${_L_RST}  [%s] %s\n" "$component" "$msg"
+  local component="$1" msg="$2"
+  _log_write "OK" "$component" "$msg"
+  printf "  ${_L_BGREEN}✓${_L_RST}  [%s] %s\n" "$component" "$msg" >&2
 }
 
-# =============================================================================
-# log_warn <component> <message>
-# =============================================================================
 log_warn() {
-  local component="$1"
-  local msg="$2"
-  _log_write "WARN " "$component" "$msg"
-  printf "  ${_L_YELLOW}!${_L_RST}  [%s] %s\n" "$component" "$msg"
+  local component="$1" msg="$2"
+  _log_write "WARN" "$component" "$msg"
+  printf "  ${_L_YELLOW}!${_L_RST}  [%s] %s\n" "$component" "$msg" >&2
 }
 
-# =============================================================================
-# log_error <component> <message>
-# =============================================================================
 log_error() {
-  local component="$1"
-  local msg="$2"
+  local component="$1" msg="$2"
   _log_write "ERROR" "$component" "$msg"
   printf "  ${_L_RED}✗${_L_RST}  [%s] %s\n" "$component" "$msg" >&2
 }
 
-# =============================================================================
-# log_step <message>
-# Para marcar el inicio de una etapa mayor (sin componente)
-# =============================================================================
 log_step() {
   local msg="$1"
-  _log_write "STEP " "engine" "$msg"
-  printf "\n${_L_BCYAN}  ▶  %s${_L_RST}\n" "$msg"
+  _log_write "STEP" "engine" "$msg"
+  printf "\n${_L_BCYAN}  ▶  %s${_L_RST}\n" "$msg" >&2
 }
 
-# =============================================================================
-# log_audit <component> <action> <detail>
-# AUDIT es especial: append-only, nunca filtrado, siempre escrito.
-# Registra toda acción con efecto en el sistema.
-# =============================================================================
+_default_audit_log() {
+  if [ "${EUID:-$(id -u 2>/dev/null || echo 1)}" -eq 0 ]; then
+    printf '%s\n' '/Library/Logs/Meridian/audit.log'
+  else
+    printf '%s\n' "${HOME}/.meridian/audit.log"
+  fi
+}
+
 log_audit() {
-  local component="$1"
-  local action="$2"
-  local detail="$3"
-  local ts
+  local component="$1" action="$2" detail="$3" ts operator hostname audit_log audit_dir
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  local operator="${SUDO_USER:-$(whoami 2>/dev/null || echo 'unknown')}"
-  local hostname
+  operator="${SUDO_USER:-$(whoami 2>/dev/null || echo 'unknown')}"
   hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
+  audit_log="${MERIDIAN_AUDIT_LOG:-$(_default_audit_log)}"
+  audit_dir="$(dirname "$audit_log")"
 
-  local audit_log="${MERIDIAN_AUDIT_LOG:-${HOME}/.meridian/audit.log}"
+  mkdir -p "$audit_dir" 2>/dev/null || {
+    _log_write "ERROR" "logger" "No se pudo crear directorio de auditoría: $audit_dir"
+    return 1
+  }
 
-  # Crear directorio si no existe
-  mkdir -p "$(dirname "$audit_log")" 2>/dev/null
+  if [ "${EUID:-$(id -u 2>/dev/null || echo 1)}" -eq 0 ] && \
+     [ "$audit_dir" = "/Library/Logs/Meridian" ]; then
+    chmod 750 "$audit_dir" 2>/dev/null || true
+  fi
 
-  # Formato: TSZ|AUDIT|operator|hostname|component|action|detail
   printf '%s|AUDIT|%s|%s|%s|%s|%s\n' \
     "$ts" "$operator" "$hostname" "$component" "$action" "$detail" \
-    >> "$audit_log" 2>/dev/null
+    >> "$audit_log" 2>/dev/null || {
+      _log_write "ERROR" "logger" "No se pudo escribir audit log: $audit_log"
+      return 1
+    }
 
-  # También al log de sesión
+  if [ "${EUID:-$(id -u 2>/dev/null || echo 1)}" -eq 0 ]; then
+    chmod 640 "$audit_log" 2>/dev/null || true
+  fi
+
   _log_write "AUDIT" "$component" "${action}: ${detail}"
-
-  # Consola — visible siempre para acciones auditadas
   printf "  ${_L_MAGENTA}⚑${_L_RST}  [AUDIT] [%s] %s: %s\n" \
-    "$component" "$action" "$detail"
+    "$component" "$action" "$detail" >&2
 }
 
-# =============================================================================
-# logger_init <session_log_path> — Inicializa el logger para una sesión
-# Crea el archivo de log con cabecera.
-# =============================================================================
 logger_init() {
-  local log_path="$1"
+  local log_path="$1" log_dir
+  log_dir="$(dirname "$log_path")"
+  mkdir -p "$log_dir" 2>/dev/null || return 1
+
   MERIDIAN_LOG_FILE="$log_path"
   export MERIDIAN_LOG_FILE
 
@@ -154,7 +114,7 @@ logger_init() {
     printf '# Meridian diagnostic.log\n'
     printf '# Session: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf '# Host: %s\n' "$(hostname -s 2>/dev/null || echo 'unknown')"
-    printf '# User: %s\n' "${SUDO_USER:-$(whoami 2>/dev/null)}"
+    printf '# User: %s\n' "${SUDO_USER:-$(whoami 2>/dev/null || echo 'unknown')}"
     printf '# Version: %s\n' "${MERIDIAN_VERSION:-unknown}"
     printf '#\n'
   } > "${MERIDIAN_LOG_FILE}" 2>/dev/null || {
@@ -162,4 +122,7 @@ logger_init() {
       "$log_path" >&2
     return 1
   }
+
+  chmod 600 "${MERIDIAN_LOG_FILE}" 2>/dev/null || true
+  return 0
 }
