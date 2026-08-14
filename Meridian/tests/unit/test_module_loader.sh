@@ -111,7 +111,36 @@ else
   printf "  \033[1;31m✗\033[0m  module_loader_run: no produjo DiagnosticResult\n" >&2
   _fail=$((_fail+1))
 fi
-rm -rf "$tmp_evidence"
+
+# --- Regresión: FileVault On + cifrado en progreso nunca debe ser PASS ---
+transition_fixture="$(mktemp -d "${TMPDIR:-/tmp}/meridian_fv_transition.XXXXXX")"
+printf '%s\n' 'FileVault is On.' 'Encryption in progress: Percent completed = 42' \
+  > "${transition_fixture}/fdesetup_disabled.txt"
+export MERIDIAN_FIXTURE_DIR="$transition_fixture"
+serialized="$(module_loader_run "filevault" "$tmp_evidence" 2>/dev/null)"
+if [ -n "$serialized" ]; then
+  result_deserialize "$serialized"
+  assert_eq "filevault: cifrado en progreso produce WARN" "WARN" "$RESULT_STATUS"
+  assert_eq "filevault: cifrado en progreso no es severidad INFO" "MEDIUM" "$RESULT_SEVERITY"
+else
+  printf "  \033[1;31m✗\033[0m  filevault transición de cifrado: sin resultado\n" >&2
+  _fail=$((_fail+1))
+fi
+
+# --- Regresión: descifrado activo debe tratarse como pérdida de protección ---
+printf '%s\n' 'FileVault is Off.' 'Decryption in progress: Percent completed = 35' \
+  > "${transition_fixture}/fdesetup_disabled.txt"
+serialized="$(module_loader_run "filevault" "$tmp_evidence" 2>/dev/null)"
+if [ -n "$serialized" ]; then
+  result_deserialize "$serialized"
+  assert_eq "filevault: descifrado en progreso produce FAIL" "FAIL" "$RESULT_STATUS"
+  assert_eq "filevault: descifrado en progreso eleva severidad" "HIGH" "$RESULT_SEVERITY"
+else
+  printf "  \033[1;31m✗\033[0m  filevault transición de descifrado: sin resultado\n" >&2
+  _fail=$((_fail+1))
+fi
+
+rm -rf "$tmp_evidence" "$transition_fixture"
 unset MERIDIAN_TEST_MODE MERIDIAN_FIXTURE_DIR
 
 # --- Test: directorio inválido no rompe el loader ---
