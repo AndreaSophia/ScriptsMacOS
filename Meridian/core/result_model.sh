@@ -45,6 +45,28 @@ result_validate() {
     fi
   done
 
+  # Frontera estructural del contrato. Evita que resultados sintácticamente
+  # incompletos entren al aggregator y luego sean tratados como canónicos.
+  printf '%s\n' "$RESULT_MODULE_ID" | grep -qE '^[a-z][a-z0-9_]*$' || {
+    echo "[result_validate] ERROR: module_id inválido: ${RESULT_MODULE_ID}" >&2
+    errors=$((errors + 1))
+  }
+
+  printf '%s\n' "$RESULT_MODULE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+    echo "[result_validate] ERROR: module_version debe ser semver X.Y.Z: ${RESULT_MODULE_VERSION}" >&2
+    errors=$((errors + 1))
+  }
+
+  printf '%s\n' "$RESULT_TIMESTAMP" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' || {
+    echo "[result_validate] ERROR: timestamp no cumple ISO8601 UTC: ${RESULT_TIMESTAMP}" >&2
+    errors=$((errors + 1))
+  }
+
+  if [ "${#RESULT_TITLE}" -gt 80 ]; then
+    echo "[result_validate] ERROR: title excede 80 caracteres" >&2
+    errors=$((errors + 1))
+  fi
+
   status_ok=0
   for s in $_VALID_STATUSES; do
     [ "$RESULT_STATUS" = "$s" ] && status_ok=1 && break
@@ -90,9 +112,29 @@ result_validate() {
     errors=$((errors + 1));;
   esac
 
-  if [ "$RESULT_REPAIRABLE" = "true" ] && [ -z "$RESULT_REPAIR_ID" ]; then
-    echo "[result_validate] ERROR: repairable=true sin repair_id" >&2
-    errors=$((errors + 1))
+  # Coherencia semántica de reparación: NONE significa que no existe una
+  # operación reparable. Si existe, debe tener identidad y riesgo explícitos.
+  if [ "$RESULT_REPAIRABLE" = "true" ]; then
+    if [ -z "$RESULT_REPAIR_ID" ]; then
+      echo "[result_validate] ERROR: repairable=true sin repair_id" >&2
+      errors=$((errors + 1))
+    elif ! printf '%s\n' "$RESULT_REPAIR_ID" | grep -qE '^[a-z][a-z0-9_]*$'; then
+      echo "[result_validate] ERROR: repair_id inválido: ${RESULT_REPAIR_ID}" >&2
+      errors=$((errors + 1))
+    fi
+    if [ "$RESULT_REPAIR_RISK" = "NONE" ]; then
+      echo "[result_validate] ERROR: repairable=true requiere repair_risk distinto de NONE" >&2
+      errors=$((errors + 1))
+    fi
+  elif [ "$RESULT_REPAIRABLE" = "false" ]; then
+    if [ "$RESULT_REPAIR_RISK" != "NONE" ]; then
+      echo "[result_validate] ERROR: repairable=false requiere repair_risk=NONE" >&2
+      errors=$((errors + 1))
+    fi
+    if [ -n "$RESULT_REPAIR_ID" ]; then
+      echo "[result_validate] ERROR: repairable=false requiere repair_id vacío" >&2
+      errors=$((errors + 1))
+    fi
   fi
 
   echo "$RESULT_EXECUTION_TIME_MS" | grep -qE '^[0-9]+$' || {
