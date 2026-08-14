@@ -6,7 +6,7 @@
 
 validation_engine_run() {
   local module_id="$1"
-  local module_dir result_file stdout_file tmp_base validate_rc serialized
+  local module_dir result_file stdout_file tmp_base serialized
 
   module_dir="$(registry_get_path "$module_id")"
 
@@ -39,14 +39,16 @@ validation_engine_run() {
     RESULT_MODULE_VERSION="$(grep '^version:' "${module_dir}/manifest.yaml" 2>/dev/null | sed 's/^version:[[:space:]]*//' | tr -d '\r"' | head -1)"
 
     result_time_start
-    # validate.sh comparte el contrato de diagnose.sh: asigna RESULT_* y puede usar return.
-    # Se redirige stdout fuera del canal de datos para mantener el resultado limpio.
-    source "${module_dir}/validate.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"
-    validate_rc=$?
+    # `set -e` viene heredado del entrypoint. El retorno de validate.sh es parte
+    # del protocolo, no una razón para terminar el proceso antes de serializar.
+    local validate_rc
+    if source "${module_dir}/validate.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
+      validate_rc=0
+    else
+      validate_rc=$?
+    fi
     result_time_end
 
-    # result_init deja EXIT_CODE=0. Si validate.sh falla y no lo ajustó,
-    # reflejamos el retorno real del script.
     if [ "$validate_rc" -ne 0 ] && [ "${RESULT_EXIT_CODE:-0}" -eq 0 ] 2>/dev/null; then
       RESULT_EXIT_CODE="$validate_rc"
     fi
@@ -61,8 +63,6 @@ validation_engine_run() {
     exit 0
   )
 
-  # La salida humana de validate.sh se conserva visible pero nunca se interpreta
-  # como parte del DiagnosticResult.
   if [ -s "$stdout_file" ]; then
     cat "$stdout_file" >&2
   fi
