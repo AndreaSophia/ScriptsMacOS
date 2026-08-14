@@ -8,8 +8,6 @@ engine_init() {
   export MERIDIAN_LOGGING_DIR="${MERIDIAN_ROOT}/logging"
   mkdir -p "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null || { echo "[FATAL] No se pudo crear: $output_dir" >&2; exit 1; }
 
-  # Cada ejecución es una sesión independiente. Evita que un segundo run en el
-  # mismo shell herede módulos o resultados de una sesión anterior.
   registry_reset
   aggregator_reset
 
@@ -20,12 +18,41 @@ engine_init() {
 }
 
 engine_run() {
-  local module_ids=("$@") id
+  local module_ids=("$@") id failures=0
   if [ ${#module_ids[@]} -eq 0 ]; then
     while IFS= read -r id; do [ -n "$id" ] && module_ids+=("$id"); done < <(registry_get_all_ids)
   fi
   [ ${#module_ids[@]} -gt 0 ] || { log_warn "engine" "No hay módulos disponibles"; return 1; }
-  for id in "${module_ids[@]}"; do _engine_run_module "$id"; done
+
+  # Un módulo roto no debe abortar una sesión de diagnóstico completa. Cada
+  # fallo se convierte en DiagnosticResult ERROR y se continúa con el resto.
+  for id in "${module_ids[@]}"; do
+    if ! _engine_run_module "$id"; then
+      failures=$((failures + 1))
+      log_error "engine" "Fallo interno procesando módulo: $id"
+    fi
+  done
+
+  [ "$failures" -eq 0 ] || log_warn "engine" "La sesión completó con ${failures} fallo(s) internos de módulo"
+  return 0
+}
+
+_engine_add_internal_error() {
+  local module_id="$1" title="$2" description="$3"
+  result_init
+  RESULT_MODULE_ID="$module_id"
+  RESULT_MODULE_VERSION="$(registry_get_field "$module_id" 4)"
+  RESULT_STATUS="ERROR"
+  RESULT_SEVERITY="HIGH"
+  RESULT_TITLE="$title"
+  RESULT_DESCRIPTION="$description"
+  RESULT_EXPLANATION="Meridian no pudo obtener o procesar un DiagnosticResult válido para este módulo."
+  RESULT_RISK="El estado real del componente permanece desconocido."
+  RESULT_SUGGESTED_ACTION="Revisar diagnostic.log y la evidencia del módulo."
+  RESULT_REPAIRABLE="false"
+  RESULT_REPAIR_RISK="NONE"
+  RESULT_EXIT_CODE="1"
+  aggregator_add
 }
 
 _engine_run_module() {
@@ -34,29 +61,46 @@ _engine_run_module() {
   module_name="$(registry_get_field "$module_id" 2)"
   log_info "engine" "▷ ${module_name} (${module_id})"
 
-  # El DiagnosticResult viaja por stdout del loader. Si hubiese salida humana
-  # adicional, solo la última línea se interpreta como dato y el resto se
-  # reenvía a stderr.
   local tmp_base="${TMPDIR:-/tmp}" capture
   capture="$(mktemp "${tmp_base%/}/meridian_engine.XXXXXX")" || return 1
-  module_loader_run "$module_id" "$MERIDIAN_EVIDENCE_DIR" >"$capture"
-  run_rc=$?
-  serialized="$(tail -n 1 "$capture")"
+
+  # module_loader_run puede retornar no-cero para errores de infraestructura.
+  # Capturarlo explícitamente evita que `set -e` termine el proceso principal.
+  if module_loader_run "$module_id" "$MERIDIAN_EVIDENCE_DIR" >"$capture"; then
+    run_rc=0
+  else
+    run_rc=$?
+  fi
+
+  serialized="$(tail -n 1 "$capture" 2>/dev/null)"
   if [ "$(wc -l < "$capture" | tr -d ' ')" -gt 1 ]; then sed '$d' "$capture" >&2; fi
   rm -f "$capture"
 
-  if [ -z "$serialized" ] || [ $run_rc -ne 0 ]; then
+  if [ -z "$serialized" ] || [ "$run_rc" -ne 0 ]; then
     log_error "engine" "Módulo '${module_id}' no produjo resultado válido"
-    return 1
+    if ! _engine_add_internal_error "$module_id" \
+      "Error interno ejecutando el módulo" \
+      "El loader terminó con rc=${run_rc} o sin un DiagnosticResult utilizable."; then
+      return 1
+    fi
+    return 0
   fi
+
   result_deserialize "$serialized"
   rule_engine_evaluate "$module_id"
   if ! aggregator_add; then
     log_error "engine" "Resultado de '${module_id}' rechazado por aggregator"
-    return 1
+    if ! _engine_add_internal_error "$module_id" \
+      "DiagnosticResult rechazado por el aggregator" \
+      "El resultado del módulo no pudo incorporarse a la sesión."; then
+      return 1
+    fi
+    return 0
   fi
+
   case "$RESULT_STATUS" in PASS) status_icon="✓";; WARN) status_icon="!";; FAIL) status_icon="✗";; SKIP) status_icon="–";; ERROR) status_icon="⚡";; *) status_icon="?";; esac
   log_info "engine" "  ${status_icon} ${RESULT_STATUS} [${RESULT_SEVERITY}] ${RESULT_TITLE}"
+  return 0
 }
 
 engine_get_results() { aggregator_get_all; }
