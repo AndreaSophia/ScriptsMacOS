@@ -63,6 +63,19 @@ result_validate() {
     errors=$((errors + 1))
   }
 
+  # Invariante documentada en IDiagnosticResult: un PASS nunca puede
+  # representar severidad operativa MEDIUM/HIGH/CRITICAL. Sin esta defensa,
+  # renderers y reglas podrían mostrar un estado verde con riesgo elevado.
+  if [ "$RESULT_STATUS" = "PASS" ]; then
+    case "$RESULT_SEVERITY" in
+      INFO|LOW) ;;
+      *)
+        echo "[result_validate] ERROR: PASS requiere severity INFO|LOW (actual: ${RESULT_SEVERITY})" >&2
+        errors=$((errors + 1))
+        ;;
+    esac
+  fi
+
   risk_ok=0
   for s in $_VALID_REPAIR_RISKS; do
     [ "$RESULT_REPAIR_RISK" = "$s" ] && risk_ok=1 && break
