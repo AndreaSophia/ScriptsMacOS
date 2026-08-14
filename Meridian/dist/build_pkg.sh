@@ -84,11 +84,45 @@ _prepare_payload() {
     fi
   done
 
-  # El entrypoint debe ser ejecutable. Los .sh internos se cargan/ejecutan
-  # explícitamente mediante bash/source y no necesitan permiso executable.
+  # Normalizar permisos del payload. No heredamos bits de escritura/ejecución
+  # accidentales del checkout que generó el paquete.
+  find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type d -exec chmod 755 {} \;
+  find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type f -exec chmod 644 {} \;
   chmod 755 "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
-  find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type f -name "*.sh" -exec chmod 644 {} \;
-  find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type f -name "*.yaml" -exec chmod 644 {} \;
+
+  # En upgrades el payload se instala sobre el árbol existente. Si un módulo o
+  # una regla fue retirada en una versión nueva, dejar el archivo antiguo haría
+  # que el loader pudiera descubrir código obsoleto. Limpiamos únicamente la
+  # ruta fija de instalación antes de copiar el nuevo payload.
+  cat > "${PKG_SCRIPTS_DIR}/preinstall" <<'PREINSTALL'
+#!/bin/bash
+set -u
+
+INSTALL_ROOT="/usr/local/lib/meridian"
+COMMAND_PATH="/usr/local/bin/meridian"
+
+case "$INSTALL_ROOT" in
+  /usr/local/lib/meridian) ;;
+  *)
+    echo "[Meridian] ruta de instalación inesperada; se aborta limpieza" >&2
+    exit 1
+    ;;
+esac
+
+if [ -L "$COMMAND_PATH" ]; then
+  rm -f "$COMMAND_PATH" || exit 1
+elif [ -e "$COMMAND_PATH" ]; then
+  echo "[Meridian] $COMMAND_PATH existe y no es un enlace; no se sobrescribe" >&2
+  exit 1
+fi
+
+if [ -d "$INSTALL_ROOT" ]; then
+  rm -rf "$INSTALL_ROOT" || exit 1
+fi
+
+exit 0
+PREINSTALL
+  chmod 755 "${PKG_SCRIPTS_DIR}/preinstall"
 
   # El enlace se crea en postinstall, no dentro del payload. Así evitamos
   # empaquetar symlinks absolutos ambiguos y podemos reemplazar instalaciones previas.
@@ -106,6 +140,10 @@ if [ ! -x "${INSTALL_ROOT}/meridian" ]; then
   exit 1
 fi
 
+if [ -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
+  echo "[Meridian] $COMMAND_PATH existe y no es un enlace; no se sobrescribe" >&2
+  exit 1
+fi
 rm -f "$COMMAND_PATH" || exit 1
 ln -s "${INSTALL_ROOT}/meridian" "$COMMAND_PATH" || exit 1
 
