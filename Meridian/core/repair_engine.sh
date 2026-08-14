@@ -34,9 +34,6 @@ repair_engine_run() {
     return 1
   fi
 
-  # La autorización se deriva del resultado que realmente produjo el engine,
-  # no de parámetros libres de la UI/caller. Esto evita degradar artificialmente
-  # un riesgo HIGH a LOW al invocar repair_engine_run.
   if ! serialized="$(aggregator_get_by_module_id "$module_id")"; then
     log_error "repair_engine" "No existe DiagnosticResult de sesión para: $module_id"
     log_audit "repair_engine" "REPAIR_BLOCKED" "module=${module_id} reason=no_session_result"
@@ -93,9 +90,6 @@ repair_engine_run() {
     "module=${module_id} repair_id=${RESULT_REPAIR_ID} risk=${RESULT_REPAIR_RISK} operator=$(privilege_get_current_user)"
   log_step "Ejecutando reparación: ${RESULT_REPAIR_ID}"
 
-  # IModule exige entregar el contexto del DiagnosticResult por entorno.
-  # Exportamos una copia explícita para que repair.sh no dependa de variables
-  # globales heredadas accidentalmente por Bash.
   export MERIDIAN_MODULE_DIR="$module_dir"
   export MERIDIAN_EVIDENCE_DIR="${MERIDIAN_EVIDENCE_DIR:-/tmp}"
   export MERIDIAN_LOG_FILE="${MERIDIAN_LOG_FILE:-/dev/null}"
@@ -106,8 +100,13 @@ repair_engine_run() {
   export RESULT_EXECUTION_TIME_MS RESULT_EXIT_CODE RESULT_RAW_OUTPUT
   export RESULT_RULE_TRIGGERED RESULT_EVIDENCE
 
-  bash "${module_dir}/repair.sh" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"
-  repair_rc=$?
+  # Un rc != 0 es un resultado esperado del protocolo de reparación. Se captura
+  # dentro de un if para impedir que `set -e` cierre Meridian antes del audit.
+  if bash "${module_dir}/repair.sh" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
+    repair_rc=0
+  else
+    repair_rc=$?
+  fi
 
   if [ "$repair_rc" -ne 0 ]; then
     log_error "repair_engine" "Reparación falló: ${RESULT_REPAIR_ID} (rc=${repair_rc})"
@@ -156,7 +155,6 @@ _repair_confirm() {
       [ "$reply" = "CONFIRMAR" ]
       ;;
     *)
-      # HIGH/CRITICAL no deberían llegar aquí: privilege_check_repair los bloquea.
       return 1
       ;;
   esac
