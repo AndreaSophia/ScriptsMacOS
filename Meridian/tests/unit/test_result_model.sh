@@ -74,6 +74,17 @@ result_validate 2>/dev/null
 assert_eq "result_validate: SEVERITY inválida retorna error" "1" "$?"
 RESULT_SEVERITY="INFO"
 
+# Invariante del contrato: PASS solo admite INFO o LOW. Un PASS con severidad
+# operativa elevada debe rechazarse para evitar estados verdes contradictorios.
+RESULT_STATUS="PASS"
+RESULT_SEVERITY="HIGH"
+result_validate 2>/dev/null
+assert_eq "result_validate: PASS/HIGH viola contrato" "1" "$?"
+RESULT_SEVERITY="LOW"
+result_validate 2>/dev/null
+assert_eq "result_validate: PASS/LOW es válido" "0" "$?"
+RESULT_SEVERITY="INFO"
+
 RESULT_REPAIRABLE="true"
 RESULT_REPAIR_ID=""
 result_validate 2>/dev/null
