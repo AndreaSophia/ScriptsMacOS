@@ -23,20 +23,15 @@
 
 set -euo pipefail
 
-# --- Directorio raíz del proyecto ---
 MERIDIAN_ROOT="$(cd "$(dirname "$0")" && pwd)"
 export MERIDIAN_ROOT
 
-# --- Versión ---
 MERIDIAN_VERSION="$(cat "${MERIDIAN_ROOT}/VERSION" 2>/dev/null | tr -d '[:space:]')"
 export MERIDIAN_VERSION
 
 MERIDIAN_ORG="Apple Platform Team"
 export MERIDIAN_ORG
 
-# =============================================================================
-# _load_core — Carga todos los módulos del core en orden de dependencias
-# =============================================================================
 _load_core() {
   local core_files=(
     "logging/logger.sh"
@@ -59,9 +54,9 @@ _load_core() {
     "ui/tui/confirm_dialog.sh"
   )
 
-  local f
+  local f path
   for f in "${core_files[@]}"; do
-    local path="${MERIDIAN_ROOT}/${f}"
+    path="${MERIDIAN_ROOT}/${f}"
     if [ ! -f "$path" ]; then
       echo "[FATAL] Componente no encontrado: $path" >&2
       exit 1
@@ -71,9 +66,6 @@ _load_core() {
   done
 }
 
-# =============================================================================
-# _parse_args — Procesa argumentos de línea de comandos
-# =============================================================================
 _parse_args() {
   _OPT_MODULES=()
   _OPT_CATEGORY=""
@@ -86,16 +78,25 @@ _parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --module)
+        [ $# -ge 2 ] || { echo "[ERROR] --module requiere un ID de módulo" >&2; return 2; }
+        [ -z "$_OPT_CATEGORY" ] || { echo "[ERROR] --module y --category no se pueden combinar" >&2; return 2; }
         _OPT_ALL=false
-        _OPT_MODULES+=("${2:?'--module requiere un ID de módulo'}")
+        _OPT_MODULES+=("$2")
         shift 2
         ;;
       --category)
+        [ $# -ge 2 ] || { echo "[ERROR] --category requiere una categoría" >&2; return 2; }
+        [ ${#_OPT_MODULES[@]} -eq 0 ] || { echo "[ERROR] --category y --module no se pueden combinar" >&2; return 2; }
+        [ -z "$_OPT_CATEGORY" ] || { echo "[ERROR] --category solo puede especificarse una vez" >&2; return 2; }
         _OPT_ALL=false
-        _OPT_CATEGORY="${2:?'--category requiere una categoría'}"
+        _OPT_CATEGORY="$2"
         shift 2
         ;;
       --all)
+        [ ${#_OPT_MODULES[@]} -eq 0 ] && [ -z "$_OPT_CATEGORY" ] || {
+          echo "[ERROR] --all no se puede combinar con --module o --category" >&2
+          return 2
+        }
         _OPT_ALL=true
         shift
         ;;
@@ -115,17 +116,18 @@ _parse_args() {
         _show_help
         exit 0
         ;;
-      *)
-        echo "[WARN] Argumento desconocido: $1" >&2
+      --)
         shift
+        [ $# -eq 0 ] || { echo "[ERROR] No se aceptan argumentos posicionales" >&2; return 2; }
+        ;;
+      *)
+        echo "[ERROR] Argumento desconocido: $1" >&2
+        return 2
         ;;
     esac
   done
 }
 
-# =============================================================================
-# _show_help
-# =============================================================================
 _show_help() {
   cat <<HELP
 
@@ -135,7 +137,7 @@ USO:
   sudo meridian [opciones]
 
 OPCIONES:
-  --module <id>    Ejecutar módulo específico (ej: filevault, crowdstrike)
+  --module <id>    Ejecutar módulo específico (se puede repetir)
   --category <cat> Ejecutar categoría (security, edr, mdm, network)
   --all            Ejecutar todos los módulos (default)
   --test           Modo test — usa fixtures sin llamar al sistema real
@@ -154,6 +156,7 @@ MÓDULOS DISPONIBLES:
 EJEMPLOS:
   sudo meridian
   sudo meridian --module crowdstrike
+  sudo meridian --module filevault --module certificates
   sudo meridian --category security
   sudo meridian --test --debug
 
@@ -167,127 +170,133 @@ SALIDA:
 HELP
 }
 
-# =============================================================================
-# _build_output_dir — Construye la ruta de salida en el Desktop del usuario real
-# =============================================================================
-_build_output_dir() {
-  local real_home
-  if [ -n "${SUDO_USER:-}" ]; then
-    real_home="$(eval echo "~${SUDO_USER}" 2>/dev/null || echo "/tmp")"
-  else
-    real_home="$HOME"
+_get_real_home() {
+  local user_name="${SUDO_USER:-}"
+
+  if [ -z "$user_name" ]; then
+    printf '%s\n' "${HOME:-/tmp}"
+    return 0
   fi
 
-  local hostname
-  hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
-  local ts
-  ts="$(date '+%Y%m%d_%H%M%S')"
-
-  echo "${real_home}/Desktop/Meridian_${hostname}_${ts}"
+  # Evita `eval echo ~usuario`: SUDO_USER no debe convertirse en código shell.
+  # dscacheutil es nativo de macOS y respeta homes no estándar.
+  local home_dir
+  home_dir="$(dscacheutil -q user -a name "$user_name" 2>/dev/null | awk '/^dir: / {print $2; exit}')"
+  if [ -n "$home_dir" ] && [ -d "$home_dir" ]; then
+    printf '%s\n' "$home_dir"
+  elif [ -d "/Users/${user_name}" ]; then
+    printf '%s\n' "/Users/${user_name}"
+  else
+    printf '%s\n' "/tmp"
+  fi
 }
 
-# =============================================================================
-# _resolve_modules — Construye la lista final de módulos a ejecutar
-# =============================================================================
+_build_output_dir() {
+  local real_home hostname ts
+  real_home="$(_get_real_home)"
+  hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
+  ts="$(date '+%Y%m%d_%H%M%S')"
+  printf '%s\n' "${real_home}/Desktop/Meridian_${hostname}_${ts}"
+}
+
 _resolve_modules() {
-  local result=()
+  local id
 
   if [ ${#_OPT_MODULES[@]} -gt 0 ]; then
-    result=("${_OPT_MODULES[@]}")
-  elif [ -n "$_OPT_CATEGORY" ]; then
-    while IFS= read -r id; do
-      [ -n "$id" ] && result+=("$id")
-    done < <(registry_get_by_category "$_OPT_CATEGORY")
-
-    if [ ${#result[@]} -eq 0 ]; then
-      log_warn "meridian" "No se encontraron módulos para la categoría: ${_OPT_CATEGORY}"
-    fi
+    for id in "${_OPT_MODULES[@]}"; do
+      printf '%s\n' "$id"
+    done
+    return 0
   fi
-  # Si result está vacío y _OPT_ALL=true, engine_run sin args ejecuta todos
 
-  echo "${result[@]:-}"
+  if [ -n "$_OPT_CATEGORY" ]; then
+    registry_get_by_category "$_OPT_CATEGORY"
+  fi
 }
 
-# =============================================================================
-# main
-# =============================================================================
+_validate_requested_modules() {
+  local id errors=0
+  for id in "$@"; do
+    if ! registry_exists "$id"; then
+      log_error "meridian" "Módulo solicitado no existe: $id"
+      errors=$((errors + 1))
+    fi
+  done
+  [ "$errors" -eq 0 ]
+}
+
 main() {
   _load_core
   _parse_args "$@"
 
-  # Verificar root antes de cualquier cosa
+  # El MVP conserva ejecución privilegiada desde el entrypoint. Los checks por
+  # módulo siguen existiendo como defensa adicional y para reutilizar el core.
   privilege_require_root
 
   local output_dir
   output_dir="$(_build_output_dir)"
 
-  # Mostrar banner
   tui_banner
 
-  # Si es modo interactivo (sin args de módulo explícitos), mostrar menú
-  local selected_modules=()
-  if [ "$_OPT_ALL" = "true" ] && [ ${#_OPT_MODULES[@]} -eq 0 ] && \
-     [ -z "$_OPT_CATEGORY" ]; then
+  # Inicializar siempre a través del engine. El flujo interactivo anterior
+  # cargaba registry/rules a mano y dejaba MERIDIAN_EVIDENCE_DIR y rutas del
+  # core sin definir antes de engine_run.
+  engine_init "$output_dir"
 
-    # Necesitamos cargar módulos antes del menú para mostrar opciones
-    # Inicializar dirs y logger temporalmente
-    mkdir -p "$output_dir" 2>/dev/null
-    logger_init "${output_dir}/diagnostic.log"
+  local selected_modules=() id menu_selection
 
-    module_loader_discover "${MERIDIAN_ROOT}/modules"
-    rule_loader_load "${MERIDIAN_ROOT}/rules/definitions"
-
-    local menu_selection
+  if [ "$_OPT_ALL" = "true" ] && [ ${#_OPT_MODULES[@]} -eq 0 ] && [ -z "$_OPT_CATEGORY" ]; then
     menu_selection="$(tui_menu_main)"
 
-    if [ "$menu_selection" = "all" ] || [ -z "$menu_selection" ]; then
-      _OPT_ALL=true
-    else
+    if [ "$menu_selection" != "all" ] && [ -n "$menu_selection" ]; then
       _OPT_ALL=false
       for id in $menu_selection; do
         selected_modules+=("$id")
       done
     fi
-
-    # Ejecutar directamente — el engine ya tiene módulos cargados
-    printf "\n"
-    log_step "Iniciando diagnóstico"
-
-    engine_run "${selected_modules[@]:-}"
-
   else
-    # Modo no-interactivo: engine_init carga todo desde cero
-    diagnostic_service_run "$output_dir" "${_OPT_MODULES[@]:-}"
+    while IFS= read -r id; do
+      [ -n "$id" ] && selected_modules+=("$id")
+    done < <(_resolve_modules)
+
+    if [ -n "$_OPT_CATEGORY" ] && [ ${#selected_modules[@]} -eq 0 ]; then
+      log_error "meridian" "No se encontraron módulos para la categoría: ${_OPT_CATEGORY}"
+      return 2
+    fi
   fi
 
-  # Mostrar resultados en pantalla
-  local results
-  results="$(engine_get_results)"
-  tui_display_results "$results"
+  if [ ${#selected_modules[@]} -gt 0 ]; then
+    _validate_requested_modules "${selected_modules[@]}" || return 2
+    engine_run "${selected_modules[@]}"
+  else
+    engine_run
+  fi
 
-  local summary
+  local results summary
+  results="$(engine_get_results)"
   summary="$(engine_get_summary)"
+
+  tui_display_results "$results"
   tui_display_summary "$summary"
 
-  # Generar reportes
   local txt_path="" json_path=""
   if [ "$_OPT_REPORT" = "true" ]; then
     txt_path="$(renderer_txt_generate "$output_dir" "$results" "$summary")"
     json_path="$(renderer_json_generate "$output_dir" "$results" "$summary")"
 
-    # Crear ZIP
-    local zip_name="Meridian_$(hostname -s 2>/dev/null || echo unknown)_$(date '+%Y%m%d_%H%M%S').zip"
-    local real_home
-    if [ -n "${SUDO_USER:-}" ]; then
-      real_home="$(eval echo "~${SUDO_USER}" 2>/dev/null || echo "/tmp")"
-    else
-      real_home="$HOME"
-    fi
-    local zip_path="${real_home}/Desktop/${zip_name}"
+    local zip_name real_home zip_path
+    zip_name="Meridian_$(hostname -s 2>/dev/null || echo unknown)_$(date '+%Y%m%d_%H%M%S').zip"
+    real_home="$(_get_real_home)"
+    zip_path="${real_home}/Desktop/${zip_name}"
 
-    ( cd "$(dirname "$output_dir")" && \
-      zip -r "$zip_name" "$(basename "$output_dir")" >/dev/null 2>&1 && \
-      mv "$zip_name" "$zip_path" 2>/dev/null ) || true
+    if command -v zip >/dev/null 2>&1; then
+      if ! ( cd "$(dirname "$output_dir")" && \
+        zip -r "$zip_path" "$(basename "$output_dir")" >/dev/null 2>&1 ); then
+        log_warn "meridian" "No se pudo crear ZIP: $zip_path"
+      fi
+    else
+      log_warn "meridian" "Comando zip no disponible; se omite empaquetado"
+    fi
 
     tui_display_output_paths "$output_dir" "$txt_path" "$json_path"
 
