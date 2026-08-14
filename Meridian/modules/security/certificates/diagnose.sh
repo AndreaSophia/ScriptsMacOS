@@ -2,17 +2,15 @@
 # =============================================================================
 # Módulo: certificates — diagnose.sh
 # Responsabilidad: inspeccionar el keychain del sistema buscando certificados
-# expirados o próximos a expirar, y verificar la presencia de CAs corporativas.
+# expirados o próximos a expirar.
 # =============================================================================
 
 _evidence_file="${MERIDIAN_EVIDENCE_DIR}/certificates_detail.txt"
 _expired_count=0
 _expiring_count=0
 _total_count=0
-_raw=""
 
 if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ]; then
-  # En modo test: simular un certificado válido
   RESULT_STATUS="PASS"
   RESULT_SEVERITY="INFO"
   RESULT_TITLE="Certificados del sistema en orden"
@@ -27,12 +25,11 @@ if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ]; then
   return 0
 fi
 
-# Listar certificados del keychain del sistema con fechas de expiración
-_cert_list="$(security find-certificate -a -p /Library/Keychains/System.keychain \
-  2>/dev/null | \
-  openssl x509 -noout -subject -dates 2>/dev/null || echo "")"
+# Capturar una sola vez el contenido PEM. Un resultado vacío NO debe considerarse
+# cumplimiento: puede significar fallo de acceso al keychain o de `security`.
+_cert_pems="$(security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null)"
+_cert_rc=$?
 
-# Guardar evidencia completa
 {
   echo "# Certificados — keychain del sistema"
   echo "# Generado: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -45,33 +42,62 @@ _cert_list="$(security find-certificate -a -p /Library/Keychains/System.keychain
     grep -E "labl|icsk" | head -50
 } > "$_evidence_file" 2>/dev/null
 
-_raw="$(security find-certificate -a /Library/Keychains/System.keychain 2>/dev/null | \
-  grep "labl" | wc -l | tr -d ' ')"
-_total_count="${_raw:-0}"
+if [ "$_cert_rc" -ne 0 ] || [ -z "$_cert_pems" ]; then
+  RESULT_STATUS="ERROR"
+  RESULT_SEVERITY="HIGH"
+  RESULT_TITLE="No se pudo inspeccionar el keychain del sistema"
+  RESULT_DESCRIPTION="El comando security no devolvió certificados del keychain del sistema."
+  RESULT_EXPLANATION="Un inventario vacío puede indicar un problema de acceso, ejecución o integridad del keychain; no debe interpretarse como cumplimiento."
+  RESULT_RISK="El estado de los certificados corporativos es desconocido."
+  RESULT_SUGGESTED_ACTION="Revisar diagnostic.log y validar manualmente /Library/Keychains/System.keychain."
+  RESULT_REPAIRABLE="false"
+  RESULT_REPAIR_RISK="NONE"
+  RESULT_EXIT_CODE="1"
+  RESULT_RAW_OUTPUT="security_rc=${_cert_rc} total=0 inspection=unavailable"
+  return 0
+fi
 
-# Verificar certificados expirados via openssl
 _now_epoch="$(date +%s)"
-while IFS= read -r cert_pem; do
-  [ -z "$cert_pem" ] && continue
-  local expiry_str
-  expiry_str="$(echo "$cert_pem" | openssl x509 -noout -enddate 2>/dev/null | \
-    sed 's/notAfter=//')"
-  [ -z "$expiry_str" ] && continue
 
-  local expiry_epoch
-  expiry_epoch="$(date -j -f "%b %d %T %Y %Z" "$expiry_str" "+%s" 2>/dev/null || echo 0)"
-  [ "$expiry_epoch" -eq 0 ] && continue
+# Separar cada PEM de forma compatible con awk/BSD de macOS. El total se cuenta
+# exclusivamente aquí para evitar el doble conteo que producía la versión previa.
+while IFS= read -r _cert_pem; do
+  [ -z "$_cert_pem" ] && continue
 
-  _total_count=$(( _total_count + 1 ))
+  _expiry_str="$(printf '%s\n' "$_cert_pem" | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')"
+  [ -z "$_expiry_str" ] && continue
 
-  if [ "$expiry_epoch" -lt "$_now_epoch" ]; then
-    _expired_count=$(( _expired_count + 1 ))
-  elif [ "$expiry_epoch" -lt "$(( _now_epoch + 30 * 86400 ))" ]; then
-    _expiring_count=$(( _expiring_count + 1 ))
+  _expiry_epoch="$(date -j -f "%b %d %T %Y %Z" "$_expiry_str" "+%s" 2>/dev/null || echo 0)"
+  [ "$_expiry_epoch" -eq 0 ] 2>/dev/null && continue
+
+  _total_count=$((_total_count + 1))
+
+  if [ "$_expiry_epoch" -lt "$_now_epoch" ]; then
+    _expired_count=$((_expired_count + 1))
+  elif [ "$_expiry_epoch" -lt "$((_now_epoch + 30 * 86400))" ]; then
+    _expiring_count=$((_expiring_count + 1))
   fi
-done < <(security find-certificate -a -p /Library/Keychains/System.keychain \
-  2>/dev/null | awk '/-----BEGIN/,/-----END/' | \
-  awk 'BEGIN{p=""} /-----BEGIN/{p=$0; next} /-----END/{print p"\n"$0; p=""; next} {p=p"\n"$0}')
+done < <(printf '%s\n' "$_cert_pems" | awk '
+  /-----BEGIN CERTIFICATE-----/ { cert=$0; in_cert=1; next }
+  in_cert { cert=cert "\n" $0 }
+  /-----END CERTIFICATE-----/ { print cert; cert=""; in_cert=0 }
+')
+
+# Si había PEMs pero ninguno pudo parsearse, tampoco es seguro devolver PASS.
+if [ "$_total_count" -eq 0 ]; then
+  RESULT_STATUS="ERROR"
+  RESULT_SEVERITY="HIGH"
+  RESULT_TITLE="No se pudieron interpretar los certificados del sistema"
+  RESULT_DESCRIPTION="El keychain devolvió datos, pero Meridian no pudo obtener fechas válidas de ningún certificado."
+  RESULT_EXPLANATION="Puede existir una incompatibilidad de formato o un problema con openssl/date."
+  RESULT_RISK="El estado de expiración de los certificados es desconocido."
+  RESULT_SUGGESTED_ACTION="Revisar certificates_detail.txt y validar el parser en un Mac de laboratorio."
+  RESULT_REPAIRABLE="false"
+  RESULT_REPAIR_RISK="NONE"
+  RESULT_EXIT_CODE="1"
+  RESULT_RAW_OUTPUT="security_rc=${_cert_rc} total=0 parse=failed"
+  return 0
+fi
 
 RESULT_RAW_OUTPUT="total=${_total_count} expired=${_expired_count} expiring_soon=${_expiring_count}"
 
