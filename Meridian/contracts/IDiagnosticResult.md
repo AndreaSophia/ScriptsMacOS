@@ -9,7 +9,7 @@ Ningún módulo puede devolver datos fuera de esta estructura.
 |--------------------|---------|-----------------------------------------------|-------------|
 | `module_id`        | string  | snake_case, único por módulo                  | Identificador del módulo |
 | `module_version`   | string  | semver "X.Y.Z"                                | Versión del módulo |
-| `timestamp`        | string  | ISO8601 "YYYY-MM-DDTHH:MM:SSZ"                | Momento de ejecución |
+| `timestamp`        | string  | ISO8601 UTC "YYYY-MM-DDTHH:MM:SSZ"            | Momento de ejecución |
 | `hostname`         | string  | hostname -s                                   | Equipo diagnosticado |
 | `status`           | enum    | PASS \| WARN \| FAIL \| SKIP \| ERROR         | Estado del diagnóstico |
 | `severity`         | enum    | INFO \| LOW \| MEDIUM \| HIGH \| CRITICAL     | Nivel de severidad |
@@ -20,7 +20,7 @@ Ningún módulo puede devolver datos fuera de esta estructura.
 | `suggested_action` | string  | qué hacer (sin ejecutar nada)                 | Acción recomendada |
 | `repairable`       | boolean | true \| false                                 | Si existe función de reparación |
 | `repair_risk`      | enum    | LOW \| MEDIUM \| HIGH \| CRITICAL \| NONE     | Riesgo de la reparación |
-| `execution_time_ms`| integer | milisegundos enteros positivos                | Duración del diagnóstico |
+| `execution_time_ms`| integer | milisegundos enteros >= 0                     | Duración del diagnóstico |
 | `exit_code`        | integer | código de salida del diagnóstico              | 0=éxito, otro=error |
 | `raw_output`       | string  | salida cruda del sistema, para evidencia      | Datos sin procesar |
 
@@ -28,7 +28,7 @@ Ningún módulo puede devolver datos fuera de esta estructura.
 
 | Campo              | Tipo    | Descripción |
 |--------------------|---------|-------------|
-| `repair_id`        | string  | Referencia a la función de reparación |
+| `repair_id`        | string  | snake_case; referencia a la función de reparación |
 | `rule_triggered`   | string  | ID de la regla que enriqueció este resultado |
 | `evidence`         | string  | Datos adicionales en formato "key=value\n..." |
 
@@ -60,8 +60,11 @@ RESULT_EVIDENCE=""
 
 ## Invariantes que el engine verifica
 
-1. `status` y `severity` son siempre enums válidos
-2. Si `status=PASS`, entonces `severity` debe ser `INFO` o `LOW`
-3. Si `repairable=true`, debe existir `repair_id` no vacío
-4. `execution_time_ms` es siempre un entero >= 0
-5. Ningún campo obligatorio puede ser vacío — usar "N/A" si no aplica
+1. `module_id` usa `snake_case`, `module_version` usa semver `X.Y.Z` y `timestamp` usa ISO8601 UTC.
+2. `status`, `severity` y `repair_risk` son siempre enums válidos.
+3. Si `status=PASS`, entonces `severity` debe ser `INFO` o `LOW`.
+4. `title` no puede exceder 80 caracteres.
+5. Si `repairable=true`, debe existir `repair_id` snake_case y `repair_risk` debe ser distinto de `NONE`.
+6. Si `repairable=false`, `repair_id` debe estar vacío y `repair_risk` debe ser `NONE`.
+7. `execution_time_ms` es siempre un entero >= 0.
+8. Ningún campo obligatorio puede ser vacío — usar "N/A" si no aplica.
