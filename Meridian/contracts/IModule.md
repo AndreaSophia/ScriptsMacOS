@@ -17,7 +17,7 @@ modules/<category>/<module_id>/
 
 ```yaml
 # Campos obligatorios
-id:               string          # snake_case, único en el registry
+id:               string          # snake_case, único en el registry y coincidente con el directorio
 name:             string          # nombre legible, max 60 chars
 description:      string          # qué diagnostica, max 200 chars
 category:         string          # security|edr|mdm|network|storage|performance|system|apps|developer
@@ -25,14 +25,24 @@ version:          string          # semver "X.Y.Z"
 author:           string
 criticality:      string          # low|medium|high|critical
 requires_root:    boolean
-timeout_seconds:  integer         # máximo tiempo de ejecución
+timeout_seconds:  integer         # entero positivo, máximo tiempo de ejecución
 
 # Campos opcionales
+repairable:       boolean         # true exige repair.sh + validate.sh; ausente equivale a false
 min_os_version:   string          # "14.0" — omitir si no hay restricción
 architectures:    list            # [arm64, x86_64] — omitir para ambos
 dependencies:     list            # IDs de módulos requeridos — omitir si ninguno
 tags:             list            # etiquetas para filtrado
 ```
+
+### Invariantes del manifest
+
+1. `id` debe ser snake_case, único y coincidir con el nombre del directorio del módulo.
+2. `version` debe usar el formato semver estricto `X.Y.Z` en el MVP.
+3. `timeout_seconds` debe ser un entero mayor que cero.
+4. Si `repairable=true`, deben existir `repair.sh` y `validate.sh`.
+5. Si existe `repair.sh`, `repairable` debe ser `true` y debe existir `validate.sh`.
+6. Un módulo no reparable no debe incluir `repair.sh`; la capacidad de modificar el sistema nunca se infiere implícitamente por la presencia de un archivo.
 
 ## diagnose.sh — Contrato de función
 
