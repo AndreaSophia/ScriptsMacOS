@@ -1,10 +1,12 @@
 #!/bin/bash
 # Meridian — core/validation_engine.sh
 # Ejecuta validate.sh después de una reparación conservando RESULT_*.
+# El DiagnosticResult viaja por un archivo temporal para no mezclarse con
+# cualquier salida informativa que emita validate.sh por stdout.
 
 validation_engine_run() {
   local module_id="$1"
-  local module_dir serialized validate_rc
+  local module_dir result_file stdout_file tmp_base validate_rc serialized
 
   module_dir="$(registry_get_path "$module_id")"
 
@@ -15,7 +17,14 @@ validation_engine_run() {
 
   log_step "Validando resultado de reparación: ${module_id}"
 
-  serialized="$(
+  tmp_base="${TMPDIR:-/tmp}"
+  result_file="$(mktemp "${tmp_base%/}/meridian_validation_result.XXXXXX")" || return 1
+  stdout_file="$(mktemp "${tmp_base%/}/meridian_validation_stdout.XXXXXX")" || {
+    rm -f "$result_file"
+    return 1
+  }
+
+  (
     source "${MERIDIAN_ROOT}/core/result_model.sh"
     source "${MERIDIAN_ROOT}/logging/logger.sh"
 
@@ -30,21 +39,36 @@ validation_engine_run() {
     RESULT_MODULE_VERSION="$(grep '^version:' "${module_dir}/manifest.yaml" 2>/dev/null | sed 's/^version:[[:space:]]*//' | tr -d '\r"' | head -1)"
 
     result_time_start
-    # validate.sh usa el mismo contrato que diagnose.sh: asigna RESULT_* y puede usar return.
-    source "${module_dir}/validate.sh" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"
+    # validate.sh comparte el contrato de diagnose.sh: asigna RESULT_* y puede usar return.
+    # Se redirige stdout fuera del canal de datos para mantener el resultado limpio.
+    source "${module_dir}/validate.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"
     validate_rc=$?
     result_time_end
-    RESULT_EXIT_CODE="${RESULT_EXIT_CODE:-$validate_rc}"
+
+    # result_init deja EXIT_CODE=0. Si validate.sh falla y no lo ajustó,
+    # reflejamos el retorno real del script.
+    if [ "$validate_rc" -ne 0 ] && [ "${RESULT_EXIT_CODE:-0}" -eq 0 ] 2>/dev/null; then
+      RESULT_EXIT_CODE="$validate_rc"
+    fi
 
     if [ "$validate_rc" -ne 0 ] && [ "$RESULT_STATUS" = "PASS" ]; then
       RESULT_STATUS="ERROR"
       RESULT_SEVERITY="HIGH"
       RESULT_TITLE="Validación terminó con error interno"
-      RESULT_EXIT_CODE="$validate_rc"
     fi
 
-    result_serialize
-  )"
+    result_serialize > "$result_file"
+    exit 0
+  )
+
+  # La salida humana de validate.sh se conserva visible pero nunca se interpreta
+  # como parte del DiagnosticResult.
+  if [ -s "$stdout_file" ]; then
+    cat "$stdout_file" >&2
+  fi
+
+  serialized="$(cat "$result_file" 2>/dev/null)"
+  rm -f "$result_file" "$stdout_file"
 
   if [ -z "$serialized" ]; then
     log_error "validation_engine" "validate.sh no produjo resultado"
@@ -53,6 +77,12 @@ validation_engine_run() {
   fi
 
   result_deserialize "$serialized"
+
+  if ! result_validate; then
+    log_error "validation_engine" "validate.sh produjo un DiagnosticResult inválido para: $module_id"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=invalid_result"
+    return 1
+  fi
 
   if [ "$RESULT_STATUS" = "PASS" ]; then
     log_ok "validation_engine" "Validación exitosa: ${module_id} → ${RESULT_STATUS}"
