@@ -57,11 +57,44 @@ _pass "manifest.yaml encontrado: ${manifest_path#$MERIDIAN_ROOT/}"
 printf "\n  \033[1mmanifest.yaml — campos obligatorios\033[0m\n"
 _check_field id _id
 _check_field name _nm
+_check_field description _de
 _check_field category _ca
 _check_field version _ve
+_check_field author _au
 _check_field criticality _cr
 _check_field requires_root _ro
 _check_field timeout_seconds _to
+
+if printf '%s\n' "$_id" | grep -qE '^[a-z][a-z0-9_]*$'; then
+  _pass "id cumple snake_case"
+else
+  _fail "id='${_id}' no cumple snake_case"
+fi
+
+case "$_ca" in
+  security|edr|mdm|network|storage|performance|system|apps|developer)
+    _pass "category es un valor válido"
+    ;;
+  *) _fail "category='${_ca}' no es válida" ;;
+esac
+
+if printf '%s\n' "$_ve" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  _pass "version cumple semver X.Y.Z"
+else
+  _fail "version='${_ve}' no cumple semver X.Y.Z"
+fi
+
+if [ "${#_nm}" -le 60 ]; then
+  _pass "name no excede 60 caracteres"
+else
+  _fail "name excede 60 caracteres"
+fi
+
+if [ "${#_de}" -le 200 ]; then
+  _pass "description no excede 200 caracteres"
+else
+  _fail "description excede 200 caracteres"
+fi
 
 case "$_ro" in
   true|false) _pass "requires_root es booleano" ;;
@@ -83,7 +116,7 @@ dir_name="$(basename "$module_dir")"
 if [ "$_id" = "$dir_name" ]; then
   _pass "id coincide con nombre del directorio"
 else
-  _warn "id='${_id}' no coincide con directorio '${dir_name}'"
+  _fail "id='${_id}' no coincide con directorio '${dir_name}'"
 fi
 
 printf "\n  \033[1marchivos requeridos\033[0m\n"
@@ -96,10 +129,18 @@ case "$repairable" in
     [ -f "${module_dir}/validate.sh" ] && _pass "validate.sh presente" || _fail "validate.sh FALTANTE (repairable=true)"
     ;;
   false|"")
-    [ -f "${module_dir}/repair.sh" ] && _warn "repair.sh presente pero repairable no es true"
+    if [ -f "${module_dir}/repair.sh" ]; then
+      _fail "repair.sh presente pero repairable no es true"
+    else
+      _pass "módulo no reparable sin repair.sh"
+    fi
     ;;
   *) _fail "repairable='${repairable}' no es válido (true|false)" ;;
 esac
+
+if [ -f "${module_dir}/repair.sh" ] && [ ! -f "${module_dir}/validate.sh" ]; then
+  _fail "validate.sh FALTANTE: IModule lo exige cuando existe repair.sh"
+fi
 
 printf "\n  \033[1msintaxis bash\033[0m\n"
 for script in diagnose.sh repair.sh validate.sh; do
