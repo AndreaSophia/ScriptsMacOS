@@ -38,6 +38,22 @@ _aggregator_field() {
   _result_field "$line" "$field"
 }
 
+# aggregator_get_by_module_id <module_id>
+# Devuelve el último DiagnosticResult del módulo sin mutar RESULT_*.
+# El último resultado es el canónico si una sesión llega a registrar más de
+# una observación del mismo módulo (por ejemplo, futuras re-ejecuciones).
+aggregator_get_by_module_id() {
+  local target="$1" line id match=""
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    id="$(_aggregator_field "$line" 1)"
+    [ "$id" = "$target" ] && match="$line"
+  done < <(aggregator_get_all)
+
+  [ -n "$match" ] || return 1
+  printf '%s\n' "$match"
+}
+
 aggregator_count_by_status() {
   local target="$1" count=0 line status
   while IFS= read -r line; do
