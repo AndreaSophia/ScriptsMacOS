@@ -1,12 +1,14 @@
 #!/bin/bash
 # =============================================================================
 # Meridian — tests/unit/test_module_loader.sh
-# Tests para module_loader, module_registry y manifest validation
+# Tests para module_loader, module_registry, manifest validation y ejecución.
 # =============================================================================
 
 MERIDIAN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+MERIDIAN_CORE_DIR="${MERIDIAN_ROOT}/core"
+MERIDIAN_LOGGING_DIR="${MERIDIAN_ROOT}/logging"
 
-# Stubs mínimos
+# Stubs mínimos para el proceso principal. El módulo aislado carga logger real.
 MERIDIAN_LOG_FILE="/dev/null"
 MERIDIAN_DEBUG=0
 log_debug() { :; }
@@ -49,6 +51,7 @@ assert_gt() {
 printf "\n\033[1mtest_module_loader.sh\033[0m\n\n"
 
 # --- Test: descubrir módulos reales ---
+registry_reset 2>/dev/null || true
 module_loader_discover "${MERIDIAN_ROOT}/modules" 2>/dev/null
 assert_gt "module_loader_discover: carga al menos 1 módulo" "0" "$(registry_count)"
 
@@ -87,8 +90,29 @@ fi
 count_before="$(registry_count)"
 registry_add "filevault" "Duplicate" "security" "1.0.0" "critical" "/tmp" "false" "10" 2>/dev/null
 count_after="$(registry_count)"
-assert_eq "registry_add: rechaza duplicado (count no cambia)" \
-  "$count_before" "$count_after"
+assert_eq "registry_add: rechaza duplicado (count no cambia)" "$count_before" "$count_after"
+
+# --- Test: ejecución aislada conserva RESULT_* y el canal de datos ---
+# Este caso reproduce el bug original del MVP: diagnose.sh debe poder asignar
+# RESULT_* dentro del subshell y devolver un DiagnosticResult limpio.
+tmp_evidence="$(mktemp -d "${TMPDIR:-/tmp}/meridian_loader_test.XXXXXX")"
+export MERIDIAN_TEST_MODE=1
+export MERIDIAN_FIXTURE_DIR="${MERIDIAN_ROOT}/tests/fixtures"
+serialized="$(module_loader_run "filevault" "$tmp_evidence" 2>/dev/null)"
+run_rc=$?
+assert_eq "module_loader_run: filevault retorna 0" "0" "$run_rc"
+
+if [ -n "$serialized" ]; then
+  result_deserialize "$serialized"
+  assert_eq "module_loader_run: conserva module_id" "filevault" "$RESULT_MODULE_ID"
+  assert_eq "module_loader_run: fixture disabled produce FAIL" "FAIL" "$RESULT_STATUS"
+  assert_eq "module_loader_run: resultado valida contrato" "0" "$(result_validate >/dev/null 2>&1; echo $?)"
+else
+  printf "  \033[1;31m✗\033[0m  module_loader_run: no produjo DiagnosticResult\n" >&2
+  _fail=$((_fail+1))
+fi
+rm -rf "$tmp_evidence"
+unset MERIDIAN_TEST_MODE MERIDIAN_FIXTURE_DIR
 
 # --- Test: directorio inválido no rompe el loader ---
 module_loader_discover "/nonexistent/path" 2>/dev/null
