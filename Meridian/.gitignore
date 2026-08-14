@@ -1,0 +1,11 @@
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
+
+# Local package build artifacts
+dist/build/
+dist/*.pkg
+
+# Local diagnostic output
+output/
+*.log
