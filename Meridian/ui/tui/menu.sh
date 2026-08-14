@@ -10,7 +10,13 @@
 # tui_banner — Pantalla de bienvenida
 # =============================================================================
 tui_banner() {
-  clear
+  # `clear` puede fallar cuando TERM no existe (Workspace ONE, SSH no
+  # interactivo, launchd). Con el entrypoint en `set -e`, eso no debe abortar
+  # una sesión de diagnóstico.
+  if [ -t 1 ] && [ -n "${TERM:-}" ] && command -v clear >/dev/null 2>&1; then
+    clear 2>/dev/null || true
+  fi
+
   printf "\n"
   printf "  \033[1;36m══════════════════════════════════════════════════\033[0m\n"
   printf "  \033[1;36m  Meridian\033[0m\n"
@@ -35,9 +41,17 @@ tui_menu_main() {
     return 1
   fi
 
+  # Un menú no tiene semántica válida sin stdin interactivo. El entrypoint
+  # normalmente evita llegar aquí en modo headless, pero conservamos esta
+  # defensa para callers que reutilicen la TUI directamente.
+  if [ ! -t 0 ]; then
+    log_warn "tui" "stdin no interactivo; se seleccionan todos los módulos"
+    printf '%s\n' "all"
+    return 0
+  fi
+
   printf "  \033[1;37m¿Qué diagnóstico deseas ejecutar?\033[0m\n\n"
 
-  # Intentar usar gum si está disponible
   if command -v gum >/dev/null 2>&1; then
     _tui_menu_gum "$available_ids"
   else
