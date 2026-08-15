@@ -92,5 +92,15 @@ else
   _pass "reporting service fails when session summary is unavailable"
 fi
 
+# Caso 6: un renderer que retorna rc=0 pero no entrega ruta no cuenta como éxito.
+diagnostic_service_get_summary() { printf '%s\n' 'total=1 pass=1 warn=0 fail=0 skip=0 error=0 worst_severity=INFO'; }
+renderer_txt_generate() { return 0; }
+if reporting_service_generate "$TMP_ROOT" txt; then
+  _fail "reporting service rejects empty renderer success path"
+else
+  _pass "reporting service rejects empty renderer success path"
+fi
+_assert_eq "" "$REPORTING_TXT_PATH" "empty renderer success does not publish TXT path"
+
 printf '\nTests: %s | Failures: %s\n' "$TESTS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]
