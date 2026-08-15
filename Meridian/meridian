@@ -157,11 +157,10 @@ EJEMPLOS:
   sudo meridian --all --test --debug
 
 SALIDA:
-  ~/Desktop/Meridian_<hostname>_<timestamp>/
-    Executive_Report.txt
-    results.json
-    diagnostic.log
-    evidencias/<module>/
+  Ejecución interactiva con sudo:
+    ~/Desktop/Meridian_<hostname>_<timestamp>/
+  Ejecución headless/root (Workspace ONE/MDM):
+    /Library/Logs/Meridian/sessions/Meridian_<hostname>_<timestamp>/
 
 HELP
 }
@@ -185,12 +184,44 @@ _get_real_home() {
   fi
 }
 
+_get_output_base() {
+  # Una sesión iniciada por una persona mediante sudo pertenece a ese usuario.
+  # Un job MDM/launchd ejecutado directamente como root no debe escribir en
+  # /var/root/Desktop: usa una ubicación corporativa estable y restringida.
+  if [ -n "${SUDO_USER:-}" ]; then
+    printf '%s/Desktop\n' "$(_get_real_home)"
+  else
+    printf '%s\n' "/Library/Logs/Meridian/sessions"
+  fi
+}
+
 _build_output_dir() {
-  local real_home hostname ts
-  real_home="$(_get_real_home)"
+  local output_base hostname ts
+  output_base="$(_get_output_base)"
   hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
   ts="$(date '+%Y%m%d_%H%M%S')"
-  printf '%s\n' "${real_home}/Desktop/Meridian_${hostname}_${ts}"
+  printf '%s\n' "${output_base}/Meridian_${hostname}_${ts}"
+}
+
+_finalize_user_output_ownership() {
+  local output_dir="$1"
+  local zip_path="${2:-}"
+  local user_name="${SUDO_USER:-}"
+
+  [ -n "$user_name" ] || return 0
+  [ -d "$output_dir" ] || return 0
+
+  local user_group
+  user_group="$(id -gn "$user_name" 2>/dev/null || printf '%s' staff)"
+
+  if ! chown -R "${user_name}:${user_group}" "$output_dir" 2>/dev/null; then
+    log_warn "meridian" "No se pudo transferir ownership de la salida a ${user_name}"
+  fi
+
+  if [ -n "$zip_path" ] && [ -f "$zip_path" ]; then
+    chown "${user_name}:${user_group}" "$zip_path" 2>/dev/null || \
+      log_warn "meridian" "No se pudo transferir ownership del ZIP a ${user_name}"
+  fi
 }
 
 _resolve_modules() {
@@ -234,8 +265,6 @@ main() {
   output_dir="$(_build_output_dir)"
 
   tui_banner
-  # La capa application no llama al engine directamente. El service mantiene
-  # la frontera canónica y permite inicializar antes del menú para poblar registry.
   diagnostic_service_init "$output_dir"
 
   local selected_modules=() id menu_selection
@@ -273,7 +302,7 @@ main() {
   tui_display_results "$results"
   tui_display_summary "$summary"
 
-  local txt_path="" json_path=""
+  local txt_path="" json_path="" zip_path=""
   if [ "$_OPT_REPORT" = "true" ]; then
     if ! reporting_service_generate "$output_dir" txt json; then
       log_warn "meridian" "La sesión completó con uno o más fallos de reporting"
@@ -281,12 +310,13 @@ main() {
     txt_path="$(reporting_service_get_txt_path)"
     json_path="$(reporting_service_get_json_path)"
 
-    local zip_name real_home zip_path
+    local zip_name output_base
     zip_name="Meridian_$(hostname -s 2>/dev/null || echo unknown)_$(date '+%Y%m%d_%H%M%S').zip"
-    real_home="$(_get_real_home)"
-    zip_path="${real_home}/Desktop/${zip_name}"
+    output_base="$(_get_output_base)"
+    zip_path="${output_base}/${zip_name}"
 
     if command -v zip >/dev/null 2>&1; then
+      mkdir -p "$output_base" 2>/dev/null || true
       if ! ( cd "$(dirname "$output_dir")" && \
         zip -r "$zip_path" "$(basename "$output_dir")" >/dev/null 2>&1 ); then
         log_warn "meridian" "No se pudo crear ZIP: $zip_path"
@@ -301,6 +331,8 @@ main() {
       printf "  \033[1;32mZIP listo   : %s\033[0m\n\n" "$zip_path"
     fi
   fi
+
+  _finalize_user_output_ownership "$output_dir" "$zip_path"
 
   log_audit "meridian" "SESSION_COMPLETED" \
     "modules=$(aggregator_count) pass=$(aggregator_count_by_status PASS) fail=$(aggregator_count_by_status FAIL)"
