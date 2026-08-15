@@ -3,12 +3,17 @@
 # Meridian — ui/tui/confirm_dialog.sh
 # Responsabilidad: diálogos de confirmación para acciones con efecto.
 # No contiene lógica de negocio — solo captura de respuesta del usuario.
+#
+# Invariante de seguridad:
+#   una reparación requiere una sesión interactiva real. En ejecución headless
+#   (Workspace ONE, launchd, SSH sin TTY, stdin cerrado) la confirmación falla
+#   de forma segura y nunca autoriza cambios por defecto.
 # =============================================================================
 
 # =============================================================================
 # tui_confirm_repair <module_name> <repair_id> <repair_risk> <description>
 # Muestra el diálogo de confirmación de reparación.
-# Retorna 0 si el usuario confirmó, 1 si canceló.
+# Retorna 0 si el usuario confirmó, 1 si canceló o no existe TTY interactiva.
 # =============================================================================
 tui_confirm_repair() {
   local module_name="$1"
@@ -16,12 +21,19 @@ tui_confirm_repair() {
   local repair_risk="$3"
   local description="$4"
 
+  # Las reparaciones nunca se autorizan desde stdin no interactivo. Esto evita
+  # que un pipe, EOF o ejecución MDM pueda transformarse accidentalmente en una
+  # confirmación válida.
+  if [ ! -t 0 ]; then
+    printf "  [repair] Confirmación bloqueada: se requiere una sesión interactiva.\n" >&2
+    return 1
+  fi
+
   local risk_color
   case "$repair_risk" in
     LOW)    risk_color='\033[0;32m' ;;
     MEDIUM) risk_color='\033[0;33m' ;;
-    HIGH)   risk_color='\033[0;31m' ;;
-    *)      risk_color='\033[0m'    ;;
+    *)      return 1 ;;
   esac
 
   printf "\n"
@@ -33,11 +45,9 @@ tui_confirm_repair() {
   printf "  Riesgo      : ${risk_color}\033[1m%s\033[0m\n" "$repair_risk"
   printf "  ──────────────────────────────────────────────\n\n"
 
-  if command -v gum >/dev/null 2>&1; then
-    gum confirm "¿Deseas ejecutar esta reparación?" && return 0 || return 1
-  else
-    _tui_confirm_plain "$repair_risk"
-  fi
+  # LOW: confirmación explícita simple. MEDIUM: token fuerte. No usamos una
+  # semántica diferente cuando gum está instalado; la política debe ser única.
+  _tui_confirm_plain "$repair_risk"
 }
 
 # =============================================================================
@@ -45,28 +55,19 @@ tui_confirm_repair() {
 # =============================================================================
 _tui_confirm_plain() {
   local repair_risk="$1"
+  local reply=""
 
   case "$repair_risk" in
     LOW)
-      printf "  Presiona ENTER para continuar o Ctrl+C para cancelar..."
-      read -r _
-      return 0
+      printf "  ¿Confirmas esta operación de riesgo BAJO? (s/n): "
+      IFS= read -r reply || return 1
+      reply="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
+      [ "$reply" = "s" ] || [ "$reply" = "si" ] || [ "$reply" = "sí" ]
       ;;
     MEDIUM)
-      printf "  ¿Confirmas esta operación? (s/n): "
-      local reply
-      read -r reply
-      reply="$(echo "$reply" | tr '[:upper:]' '[:lower:]')"
-      [ "$reply" = "s" ] || [ "$reply" = "si" ] || [ "$reply" = "sí" ] && return 0
-      return 1
-      ;;
-    HIGH)
-      printf "  Esta operación tiene riesgo ALTO.\n"
-      printf "  Escribe \033[1mCONFIRMAR\033[0m para proceder: "
-      local reply
-      read -r reply
-      [ "$reply" = "CONFIRMAR" ] && return 0
-      return 1
+      printf "  Riesgo MEDIO. Escribe \033[1mCONFIRMAR\033[0m para proceder: "
+      IFS= read -r reply || return 1
+      [ "$reply" = "CONFIRMAR" ]
       ;;
     *)
       return 1
@@ -79,7 +80,11 @@ _tui_confirm_plain() {
 # =============================================================================
 tui_press_enter() {
   local msg="${1:-Presiona ENTER para continuar...}"
+
+  # Una pausa de UI no debe bloquear jobs headless.
+  [ -t 0 ] || return 0
+
   printf "\n  %s" "$msg"
-  read -r _
+  IFS= read -r _ || return 1
   printf "\n"
 }
