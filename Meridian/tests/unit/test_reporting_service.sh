@@ -63,5 +63,34 @@ _assert_eq "$TMP_ROOT/results.json" "$REPORTING_JSON_PATH" "successful JSON path
 _assert_eq "1" "$TXT_CALLED" "TXT renderer attempted once"
 _assert_eq "1" "$JSON_CALLED" "JSON renderer still attempted after TXT failure"
 
+# Caso 3: invocación sin output_dir debe fallar de forma explícita bajo set -u.
+if reporting_service_generate; then
+  _fail "reporting service rejects missing output directory"
+else
+  _pass "reporting service rejects missing output directory"
+fi
+
+# Caso 4: una sesión sin resultados no debe producir reportes vacíos ni depender
+# de cómo el caller tenga configurado errexit.
+diagnostic_service_get_results() { return 1; }
+renderer_txt_generate() { _fail "TXT renderer must not run without session results"; return 1; }
+renderer_json_generate() { _fail "JSON renderer must not run without session results"; return 1; }
+if reporting_service_generate "$TMP_ROOT" txt json; then
+  _fail "reporting service fails when session results are unavailable"
+else
+  _pass "reporting service fails when session results are unavailable"
+fi
+_assert_eq "" "$REPORTING_TXT_PATH" "TXT path remains empty without results"
+_assert_eq "" "$REPORTING_JSON_PATH" "JSON path remains empty without results"
+
+# Caso 5: un resumen ausente también falla antes de entrar a renderers.
+diagnostic_service_get_results() { printf '%s\n' 'fixture-result'; }
+diagnostic_service_get_summary() { return 1; }
+if reporting_service_generate "$TMP_ROOT" txt; then
+  _fail "reporting service fails when session summary is unavailable"
+else
+  _pass "reporting service fails when session summary is unavailable"
+fi
+
 printf '\nTests: %s | Failures: %s\n' "$TESTS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]
