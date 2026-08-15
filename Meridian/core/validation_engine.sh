@@ -8,11 +8,21 @@ validation_engine_run() {
   local module_id="$1"
   local module_dir result_file stdout_file tmp_base serialized
 
+  if ! registry_exists "$module_id"; then
+    log_error "validation_engine" "Módulo no registrado: $module_id"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=not_registered"
+    return 1
+  fi
+
   module_dir="$(registry_get_path "$module_id")"
 
-  if [ ! -f "${module_dir}/validate.sh" ]; then
-    log_warn "validation_engine" "validate.sh no encontrado para módulo: $module_id — no se puede validar"
-    return 0
+  # La validación post-reparación es parte de la frontera de seguridad del
+  # contrato IModule. Si desaparece en runtime, no podemos considerar la
+  # reparación validada ni devolver éxito por omisión.
+  if [ -z "$module_dir" ] || [ ! -f "${module_dir}/validate.sh" ]; then
+    log_error "validation_engine" "validate.sh no disponible para módulo: $module_id"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=validator_unavailable"
+    return 1
   fi
 
   log_step "Validando resultado de reparación: ${module_id}"
@@ -36,7 +46,7 @@ validation_engine_run() {
 
     result_init
     RESULT_MODULE_ID="$module_id"
-    RESULT_MODULE_VERSION="$(grep '^version:' "${module_dir}/manifest.yaml" 2>/dev/null | sed 's/^version:[[:space:]]*//' | tr -d '\r"' | head -1)"
+    RESULT_MODULE_VERSION="$(grep '^version:' "${module_dir}/manifest.yaml" 2>/dev/null | sed 's/^version:[[:space:]]*//' | tr -d '\r\"' | head -1)"
 
     result_time_start
     # `set -e` viene heredado del entrypoint. El retorno de validate.sh es parte
@@ -76,7 +86,11 @@ validation_engine_run() {
     return 1
   fi
 
-  result_deserialize "$serialized"
+  if ! result_deserialize "$serialized"; then
+    log_error "validation_engine" "validate.sh produjo framing DiagnosticResult inválido para: $module_id"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=invalid_framing"
+    return 1
+  fi
 
   if ! result_validate; then
     log_error "validation_engine" "validate.sh produjo un DiagnosticResult inválido para: $module_id"
