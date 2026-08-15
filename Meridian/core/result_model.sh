@@ -8,6 +8,7 @@
 readonly _VALID_STATUSES="PASS WARN FAIL SKIP ERROR"
 readonly _VALID_SEVERITIES="INFO LOW MEDIUM HIGH CRITICAL"
 readonly _VALID_REPAIR_RISKS="NONE LOW MEDIUM HIGH CRITICAL"
+readonly _RESULT_V2_FIELDS=19
 
 result_init() {
   RESULT_MODULE_ID=""
@@ -45,8 +46,6 @@ result_validate() {
     fi
   done
 
-  # Frontera estructural del contrato. Evita que resultados sintácticamente
-  # incompletos entren al aggregator y luego sean tratados como canónicos.
   printf '%s\n' "$RESULT_MODULE_ID" | grep -qE '^[a-z][a-z0-9_]*$' || {
     echo "[result_validate] ERROR: module_id inválido: ${RESULT_MODULE_ID}" >&2
     errors=$((errors + 1))
@@ -85,9 +84,6 @@ result_validate() {
     errors=$((errors + 1))
   }
 
-  # Invariante documentada en IDiagnosticResult: un PASS nunca puede
-  # representar severidad operativa MEDIUM/HIGH/CRITICAL. Sin esta defensa,
-  # renderers y reglas podrían mostrar un estado verde con riesgo elevado.
   if [ "$RESULT_STATUS" = "PASS" ]; then
     case "$RESULT_SEVERITY" in
       INFO|LOW) ;;
@@ -112,8 +108,6 @@ result_validate() {
     errors=$((errors + 1));;
   esac
 
-  # Coherencia semántica de reparación: NONE significa que no existe una
-  # operación reparable. Si existe, debe tener identidad y riesgo explícitos.
   if [ "$RESULT_REPAIRABLE" = "true" ]; then
     if [ -z "$RESULT_REPAIR_ID" ]; then
       echo "[result_validate] ERROR: repairable=true sin repair_id" >&2
@@ -149,8 +143,6 @@ result_validate() {
   [ "$errors" -eq 0 ]
 }
 
-# Escape reversible para transportar texto arbitrario en una sola línea.
-# Se escapa % primero para evitar colisiones, luego CR/LF y |.
 _result_encode() {
   local s="$1"
   s="${s//%/%25}"
@@ -169,8 +161,6 @@ _result_decode() {
   printf '%s' "$s"
 }
 
-# Formato interno v2: 19 campos separados por un único |.
-# Como cada | de contenido se codifica como %7C, el split es determinista.
 result_serialize() {
   printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
     "$(_result_encode "$RESULT_MODULE_ID")" \
@@ -200,8 +190,23 @@ _result_field() {
   _result_decode "$raw"
 }
 
+# Valida el framing antes de mutar RESULT_*. Dado que todo pipe de contenido
+# se codifica como %7C, un registro v2 válido tiene exactamente 19 campos.
+# Rechazar campos extra evita truncar silenciosamente payloads corruptos.
+_result_v2_frame_valid() {
+  local line="$1" count
+  [ -n "$line" ] || return 1
+  count="$(printf '%s\n' "$line" | awk -F'|' '{print NF}')"
+  [ "$count" -eq "$_RESULT_V2_FIELDS" ] 2>/dev/null
+}
+
 result_deserialize() {
   local line="$1"
+  if ! _result_v2_frame_valid "$line"; then
+    echo "[result_deserialize] ERROR: framing DiagnosticResult v2 inválido" >&2
+    return 1
+  fi
+
   RESULT_MODULE_ID="$(_result_field "$line" 1)"
   RESULT_MODULE_VERSION="$(_result_field "$line" 2)"
   RESULT_TIMESTAMP="$(_result_field "$line" 3)"
@@ -221,6 +226,7 @@ result_deserialize() {
   RESULT_RAW_OUTPUT="$(_result_field "$line" 17)"
   RESULT_RULE_TRIGGERED="$(_result_field "$line" 18)"
   RESULT_EVIDENCE="$(_result_field "$line" 19)"
+  return 0
 }
 
 result_time_start() {
