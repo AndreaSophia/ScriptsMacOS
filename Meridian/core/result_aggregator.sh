@@ -23,6 +23,43 @@ aggregator_add() {
   return 0
 }
 
+# aggregator_replace_current_by_module_id
+# Reemplaza el resultado canónico de RESULT_MODULE_ID sin aumentar el total.
+# Se usa tras una validación post-reparación: el audit log conserva el historial,
+# mientras reporting/resúmenes deben reflejar el estado actual del módulo.
+aggregator_replace_current_by_module_id() {
+  if ! result_validate; then
+    log_error "aggregator" "Resultado de reemplazo '${RESULT_MODULE_ID}' rechazado por fallo de validación"
+    return 1
+  fi
+
+  local target="$RESULT_MODULE_ID" replacement line id rebuilt="" replaced=0
+  replacement="$(result_serialize)" || return 1
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    id="$(_aggregator_field "$line" 1)"
+    if [ "$id" = "$target" ]; then
+      line="$replacement"
+      replaced=1
+    fi
+    if [ -n "$rebuilt" ]; then
+      rebuilt="${rebuilt}"$'\n'"${line}"
+    else
+      rebuilt="$line"
+    fi
+  done < <(aggregator_get_all)
+
+  if [ "$replaced" -ne 1 ]; then
+    log_error "aggregator" "No existe resultado canónico para reemplazar: ${target}"
+    return 1
+  fi
+
+  _AGGREGATOR_RESULTS="$rebuilt"
+  log_debug "aggregator" "Resultado canónico actualizado: ${RESULT_MODULE_ID} → ${RESULT_STATUS} [${RESULT_SEVERITY}]"
+  return 0
+}
+
 aggregator_get_all() {
   [ -n "$_AGGREGATOR_RESULTS" ] && printf '%s\n' "$_AGGREGATOR_RESULTS"
 }
@@ -41,7 +78,7 @@ _aggregator_field() {
 # aggregator_get_by_module_id <module_id>
 # Devuelve el último DiagnosticResult del módulo sin mutar RESULT_*.
 # El último resultado es el canónico si una sesión llega a registrar más de
-# una observación del mismo módulo (por ejemplo, futuras re-ejecuciones).
+# una observación del mismo módulo.
 aggregator_get_by_module_id() {
   local target="$1" line id match=""
   while IFS= read -r line; do
