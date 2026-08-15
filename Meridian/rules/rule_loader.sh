@@ -30,6 +30,51 @@ _rule_field() {
   _rule_decode "$raw"
 }
 
+_rule_in_set() {
+  local needle="$1" item
+  shift
+  for item in "$@"; do
+    [ "$needle" = "$item" ] && return 0
+  done
+  return 1
+}
+
+_rule_validate_schema() {
+  local rule_id="$1" module="$2" field="$3" operator="$4" value="$5"
+  local severity="$6" repairable="$7" repair_risk="$8"
+
+  printf '%s\n' "$rule_id" | grep -qE '^[a-z][a-z0-9_]*$' || return 1
+  printf '%s\n' "$module" | grep -qE '^[a-z][a-z0-9_]*$' || return 1
+
+  _rule_in_set "$field" \
+    status severity title description explanation risk suggested_action \
+    repairable repair_risk repair_id exit_code raw_output execution_time_ms evidence || return 1
+
+  _rule_in_set "$operator" \
+    equals not_equals contains not_contains starts_with matches \
+    less_than greater_than is_empty is_not_empty || return 1
+
+  case "$operator" in
+    is_empty|is_not_empty) ;;
+    *) [ -n "$value" ] || return 1 ;;
+  esac
+
+  _rule_in_set "$severity" INFO LOW MEDIUM HIGH CRITICAL || return 1
+  _rule_in_set "$repairable" true false || return 1
+  _rule_in_set "$repair_risk" NONE LOW MEDIUM HIGH CRITICAL || return 1
+
+  # Una regla no debe declarar riesgo de reparación si no declara repairable.
+  # La autorización efectiva sigue perteneciendo al Repair Engine.
+  if [ "$repairable" = "false" ] && [ "$repair_risk" != "NONE" ]; then
+    return 1
+  fi
+  if [ "$repairable" = "true" ] && [ "$repair_risk" = "NONE" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 _rule_parse_block() {
   local block="$1"
 
@@ -56,10 +101,14 @@ _rule_parse_block() {
 
   [ -n "$rule_id" ] && [ -n "$condition_module" ] && \
     [ -n "$condition_field" ] && [ -n "$condition_operator" ] && \
-    [ -n "$condition_value" ] && [ -n "$result_severity" ] || return 1
+    [ -n "$result_severity" ] || return 1
 
   result_repairable="${result_repairable:-false}"
   result_repair_risk="${result_repair_risk:-NONE}"
+
+  _rule_validate_schema \
+    "$rule_id" "$condition_module" "$condition_field" "$condition_operator" \
+    "$condition_value" "$result_severity" "$result_repairable" "$result_repair_risk" || return 1
 
   # Formato interno: 11 campos separados por un solo |.
   printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
