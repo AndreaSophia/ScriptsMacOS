@@ -2,19 +2,50 @@
 # Meridian — core/engine.sh
 engine_init() {
   local output_dir="$1"
+
+  if [ -z "$output_dir" ]; then
+    printf '%s\n' "[FATAL] engine_init requiere un directorio de salida" >&2
+    return 1
+  fi
+
   export MERIDIAN_OUTPUT_DIR="$output_dir"
   export MERIDIAN_EVIDENCE_DIR="${output_dir}/evidencias"
   export MERIDIAN_CORE_DIR="${MERIDIAN_ROOT}/core"
   export MERIDIAN_LOGGING_DIR="${MERIDIAN_ROOT}/logging"
-  mkdir -p "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null || { echo "[FATAL] No se pudo crear: $output_dir" >&2; exit 1; }
+
+  if ! mkdir -p "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null; then
+    printf '%s\n' "[FATAL] No se pudo crear el directorio de salida: $output_dir" >&2
+    return 1
+  fi
 
   registry_reset
   aggregator_reset
 
-  logger_init "${output_dir}/diagnostic.log"
+  if ! logger_init "${output_dir}/diagnostic.log"; then
+    printf '%s\n' "[FATAL] No se pudo inicializar el logger de sesión" >&2
+    return 1
+  fi
+
   log_step "Inicializando Meridian v${MERIDIAN_VERSION}"
-  log_step "Cargando módulos"; module_loader_discover "${MERIDIAN_ROOT}/modules"
-  log_step "Cargando reglas"; rule_loader_load "${MERIDIAN_ROOT}/rules/definitions"
+
+  log_step "Cargando módulos"
+  if ! module_loader_discover "${MERIDIAN_ROOT}/modules"; then
+    log_error "engine" "No se pudo completar el descubrimiento de módulos"
+    return 1
+  fi
+
+  if [ "$(registry_count)" -eq 0 ]; then
+    log_error "engine" "No se registraron módulos válidos"
+    return 1
+  fi
+
+  log_step "Cargando reglas"
+  if ! rule_loader_load "${MERIDIAN_ROOT}/rules/definitions"; then
+    log_error "engine" "No se pudo completar la carga de reglas"
+    return 1
+  fi
+
+  return 0
 }
 
 engine_run() {
