@@ -149,6 +149,14 @@ INSTALL_ROOT="/usr/local/lib/meridian"
 COMMAND_PATH="/usr/local/bin/meridian"
 MANIFEST_NAME=".meridian-payload-manifest"
 MANIFEST_PATH="${INSTALL_ROOT}/${MANIFEST_NAME}"
+CURRENT_LIST=""
+
+_cleanup_tmp() {
+  if [ -n "$CURRENT_LIST" ] && [ -f "$CURRENT_LIST" ]; then
+    rm -f "$CURRENT_LIST" 2>/dev/null || true
+  fi
+}
+trap _cleanup_tmp EXIT
 
 case "$INSTALL_ROOT" in
   /usr/local/lib/meridian) ;;
@@ -168,18 +176,31 @@ if [ ! -f "$MANIFEST_PATH" ]; then
   exit 1
 fi
 
+# Obtener primero una instantánea verificable del árbol instalado. No usamos
+# `find | while` porque, sin pipefail, un fallo de find podría quedar oculto por
+# el estado exitoso del while y dejar residuos de una versión anterior.
+CURRENT_LIST="$(mktemp /tmp/meridian-installed.XXXXXX)" || {
+  echo "[Meridian] no se pudo crear archivo temporal para verificar upgrade" >&2
+  exit 1
+}
+if ! find "$INSTALL_ROOT" \( -type f -o -type l \) -print > "$CURRENT_LIST"; then
+  echo "[Meridian] no se pudo enumerar instalación existente; se evita limpieza parcial" >&2
+  exit 1
+fi
+
 # Retirar únicamente archivos residuales no pertenecientes al payload recién
 # instalado. La instalación nueva ya existe en este punto, por lo que un fallo
 # anterior de Installer no destruye preventivamente la versión funcional.
-find "$INSTALL_ROOT" \( -type f -o -type l \) -print | while IFS= read -r path; do
+while IFS= read -r path; do
   [ "$path" = "$MANIFEST_PATH" ] && continue
   rel="${path#${INSTALL_ROOT}/}"
-  if ! grep -Fqx "$rel" "$MANIFEST_PATH"; then
-    rm -f "$path" || exit 1
+  if ! grep -Fqx -e "$rel" "$MANIFEST_PATH"; then
+    rm -f "$path" || {
+      echo "[Meridian] no se pudo retirar residuo: $path" >&2
+      exit 1
+    }
   fi
-done
-cleanup_rc=$?
-[ "$cleanup_rc" -eq 0 ] || exit "$cleanup_rc"
+done < "$CURRENT_LIST"
 
 # Retirar directorios que hayan quedado vacíos, de abajo hacia arriba.
 find "$INSTALL_ROOT" -depth -type d ! -path "$INSTALL_ROOT" -exec rmdir {} \; 2>/dev/null || true
