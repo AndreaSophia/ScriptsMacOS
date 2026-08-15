@@ -17,6 +17,7 @@ readonly PKG_IDENTIFIER="com.itau.apple.meridian"
 readonly PKG_INSTALL_LOCATION="/usr/local/lib/meridian"
 readonly PKG_COMMAND_PATH="/usr/local/bin/meridian"
 readonly PKG_OUTPUT="${PKG_NAME}-${PKG_VERSION}.pkg"
+readonly PAYLOAD_MANIFEST_NAME=".meridian-payload-manifest"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -67,6 +68,21 @@ _check_requirements() {
   echo "[OK]    Requisitos verificados. PKG version: ${PKG_VERSION}"
 }
 
+_write_payload_manifest() {
+  local install_root="${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}"
+  local manifest="${install_root}/${PAYLOAD_MANIFEST_NAME}"
+
+  # El manifiesto enumera archivos regulares y symlinks relativos al install root.
+  # Se genera al final para que postinstall pueda retirar residuos de versiones
+  # anteriores sin borrar primero una instalación funcional.
+  (
+    cd "$install_root" || exit 1
+    find . \( -type f -o -type l \) ! -name "$PAYLOAD_MANIFEST_NAME" -print | \
+      sed 's#^\./##' | LC_ALL=C sort
+  ) > "$manifest"
+  chmod 644 "$manifest"
+}
+
 _prepare_payload() {
   echo "[BUILD] Preparando payload..."
   rm -rf "$BUILD_DIR"
@@ -90,56 +106,69 @@ _prepare_payload() {
   find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type f -exec chmod 644 {} \;
   chmod 755 "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
 
-  # En upgrades el payload se instala sobre el árbol existente. Si un módulo o
-  # una regla fue retirada en una versión nueva, dejar el archivo antiguo haría
-  # que el loader pudiera descubrir código obsoleto. Limpiamos únicamente la
-  # ruta fija de instalación antes de copiar el nuevo payload.
+  _write_payload_manifest
+
+  # preinstall NO borra la versión existente. Un fallo posterior de Installer no
+  # debe convertir un upgrade fallido en una desinstalación accidental.
   cat > "${PKG_SCRIPTS_DIR}/preinstall" <<'PREINSTALL'
 #!/bin/bash
 set -u
 
-INSTALL_ROOT="/usr/local/lib/meridian"
 COMMAND_PATH="/usr/local/bin/meridian"
 
-case "$INSTALL_ROOT" in
-  /usr/local/lib/meridian) ;;
-  *)
-    echo "[Meridian] ruta de instalación inesperada; se aborta limpieza" >&2
-    exit 1
-    ;;
-esac
-
-if [ -L "$COMMAND_PATH" ]; then
-  rm -f "$COMMAND_PATH" || exit 1
-elif [ -e "$COMMAND_PATH" ]; then
+if [ -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
   echo "[Meridian] $COMMAND_PATH existe y no es un enlace; no se sobrescribe" >&2
   exit 1
-fi
-
-if [ -d "$INSTALL_ROOT" ]; then
-  rm -rf "$INSTALL_ROOT" || exit 1
 fi
 
 exit 0
 PREINSTALL
   chmod 755 "${PKG_SCRIPTS_DIR}/preinstall"
 
-  # El enlace se crea en postinstall, no dentro del payload. Así evitamos
-  # empaquetar symlinks absolutos ambiguos y podemos reemplazar instalaciones previas.
   cat > "${PKG_SCRIPTS_DIR}/postinstall" <<'POSTINSTALL'
 #!/bin/bash
 set -u
 
 INSTALL_ROOT="/usr/local/lib/meridian"
 COMMAND_PATH="/usr/local/bin/meridian"
+MANIFEST_NAME=".meridian-payload-manifest"
+MANIFEST_PATH="${INSTALL_ROOT}/${MANIFEST_NAME}"
 
-mkdir -p "/usr/local/bin" || exit 1
+case "$INSTALL_ROOT" in
+  /usr/local/lib/meridian) ;;
+  *)
+    echo "[Meridian] ruta de instalación inesperada" >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -x "${INSTALL_ROOT}/meridian" ]; then
   echo "[Meridian] entrypoint no encontrado o no ejecutable: ${INSTALL_ROOT}/meridian" >&2
   exit 1
 fi
 
+if [ ! -f "$MANIFEST_PATH" ]; then
+  echo "[Meridian] manifiesto de payload ausente; se evita limpieza insegura" >&2
+  exit 1
+fi
+
+# Retirar únicamente archivos residuales no pertenecientes al payload recién
+# instalado. La instalación nueva ya existe en este punto, por lo que un fallo
+# anterior de Installer no destruye preventivamente la versión funcional.
+find "$INSTALL_ROOT" \( -type f -o -type l \) -print | while IFS= read -r path; do
+  [ "$path" = "$MANIFEST_PATH" ] && continue
+  rel="${path#${INSTALL_ROOT}/}"
+  if ! grep -Fqx "$rel" "$MANIFEST_PATH"; then
+    rm -f "$path" || exit 1
+  fi
+done
+cleanup_rc=$?
+[ "$cleanup_rc" -eq 0 ] || exit "$cleanup_rc"
+
+# Retirar directorios que hayan quedado vacíos, de abajo hacia arriba.
+find "$INSTALL_ROOT" -depth -type d ! -path "$INSTALL_ROOT" -exec rmdir {} \; 2>/dev/null || true
+
+mkdir -p "/usr/local/bin" || exit 1
 if [ -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
   echo "[Meridian] $COMMAND_PATH existe y no es un enlace; no se sobrescribe" >&2
   exit 1
@@ -147,9 +176,17 @@ fi
 rm -f "$COMMAND_PATH" || exit 1
 ln -s "${INSTALL_ROOT}/meridian" "$COMMAND_PATH" || exit 1
 
-# Asegurar directorio corporativo de audit log con acceso restringido.
+# La instalación debe quedar administrable pero no modificable por usuarios
+# estándar. El entrypoint es el único archivo que necesita bit ejecutable.
+chown -R root:wheel "$INSTALL_ROOT" 2>/dev/null || true
+find "$INSTALL_ROOT" -type d -exec chmod 755 {} \;
+find "$INSTALL_ROOT" -type f -exec chmod 644 {} \;
+chmod 755 "${INSTALL_ROOT}/meridian" || exit 1
+
+# Directorio corporativo del audit log, restringido a root y administradores.
 mkdir -p "/Library/Logs/Meridian" || exit 1
-chmod 750 "/Library/Logs/Meridian" || true
+chown root:admin "/Library/Logs/Meridian" 2>/dev/null || true
+chmod 750 "/Library/Logs/Meridian" || exit 1
 
 exit 0
 POSTINSTALL
