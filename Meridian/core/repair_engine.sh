@@ -41,7 +41,11 @@ repair_engine_run() {
     return 1
   fi
 
-  result_deserialize "$serialized"
+  if ! result_deserialize "$serialized"; then
+    log_error "repair_engine" "Framing DiagnosticResult canónico inválido para: $module_id"
+    log_audit "repair_engine" "REPAIR_BLOCKED" "module=${module_id} reason=invalid_result_framing"
+    return 1
+  fi
   if ! result_validate; then
     log_error "repair_engine" "DiagnosticResult canónico inválido para: $module_id"
     log_audit "repair_engine" "REPAIR_BLOCKED" "module=${module_id} reason=invalid_result"
