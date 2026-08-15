@@ -31,7 +31,7 @@ timeout_seconds:  integer         # entero positivo, máximo tiempo de ejecució
 repairable:       boolean         # true exige repair.sh + validate.sh; ausente equivale a false
 min_os_version:   string          # "14.0" — omitir si no hay restricción
 architectures:    list            # [arm64, x86_64] — omitir para ambos
-dependencies:     list            # IDs de módulos requeridos — omitir si ninguno
+dependencies:     list            # module_id requeridos — bloque YAML o [id_a, id_b]
 tags:             list            # etiquetas para filtrado
 ```
 
@@ -43,6 +43,9 @@ tags:             list            # etiquetas para filtrado
 4. Si `repairable=true`, deben existir `repair.sh` y `validate.sh`.
 5. Si existe `repair.sh`, `repairable` debe ser `true` y debe existir `validate.sh`.
 6. Un módulo no reparable no debe incluir `repair.sh`; la capacidad de modificar el sistema nunca se infiere implícitamente por la presencia de un archivo.
+7. Cada valor de `dependencies` debe ser un `module_id` snake_case; un módulo no puede depender de sí mismo ni declarar el mismo ID dos veces.
+8. El engine resuelve las dependencias antes de ejecutar: cada dependencia corre antes que su dependiente y se ejecuta una sola vez aunque sea compartida.
+9. Una dependencia inexistente o un ciclo invalida el plan completo de ejecución. Meridian falla cerrado antes de producir un diagnóstico parcial basado en un grafo inválido.
 
 ## diagnose.sh — Contrato de función
 
