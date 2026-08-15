@@ -74,8 +74,6 @@ result_validate 2>/dev/null
 assert_eq "result_validate: SEVERITY inválida retorna error" "1" "$?"
 RESULT_SEVERITY="INFO"
 
-# Invariante del contrato: PASS solo admite INFO o LOW. Un PASS con severidad
-# operativa elevada debe rechazarse para evitar estados verdes contradictorios.
 RESULT_STATUS="PASS"
 RESULT_SEVERITY="HIGH"
 result_validate 2>/dev/null
@@ -91,7 +89,6 @@ result_validate 2>/dev/null
 assert_eq "result_validate: repairable=true sin repair_id falla" "1" "$?"
 RESULT_REPAIRABLE="false"
 
-# Serialización básica.
 result_init
 RESULT_MODULE_ID="test_module"
 RESULT_MODULE_VERSION="2.0.0"
@@ -120,8 +117,13 @@ assert_eq "result_deserialize: STATUS correcto" "FAIL" "$RESULT_STATUS"
 assert_eq "result_deserialize: SEVERITY correcto" "HIGH" "$RESULT_SEVERITY"
 assert_eq "result_deserialize: EXEC_TIME correcto" "250" "$RESULT_EXECUTION_TIME_MS"
 
-# Payload arbitrario: protege el protocolo v2 frente a pipes, %, CR/LF y texto
-# parecido a escapes internos. Esto cubre especialmente RAW_OUTPUT/EVIDENCE.
+# El framing v2 debe ser exacto: ni campos faltantes ni campos extra pueden
+# aceptarse silenciosamente. Esto protege a engine/aggregator de truncamiento.
+result_deserialize "a|b|c" 2>/dev/null
+assert_eq "result_deserialize: framing corto es rechazado" "1" "$?"
+result_deserialize "${serialized}|campo_extra" 2>/dev/null
+assert_eq "result_deserialize: framing con campo extra es rechazado" "1" "$?"
+
 result_init
 RESULT_MODULE_ID="payload_test"
 RESULT_MODULE_VERSION="1.0.0"
