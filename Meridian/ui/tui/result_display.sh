@@ -32,6 +32,23 @@ _color_for_status() {
 
 _RST='\033[0m'
 
+# Lee una clave del resumen canónico (key=value separados por espacios) sin
+# depender de grep/cut. Siempre retorna 0 para que una clave ausente no active
+# `set -e` desde la capa de presentación.
+_summary_get() {
+  local summary="$1" key="$2" token
+  for token in $summary; do
+    case "$token" in
+      "${key}="*)
+        printf '%s\n' "${token#*=}"
+        return 0
+        ;;
+    esac
+  done
+  printf '%s\n' ""
+  return 0
+}
+
 # =============================================================================
 # tui_display_results <results_blob>
 # =============================================================================
@@ -50,9 +67,12 @@ tui_display_results() {
   while IFS= read -r line; do
     [ -z "$line" ] && continue
 
-    # Un único parser para todo Meridian. Esto evita que la TUI quede acoplada
-    # al separador/encoding del DiagnosticResult.
-    result_deserialize "$line"
+    # Nunca validar estado residual. Si el framing no puede deserializarse,
+    # la línea se rechaza antes de consultar RESULT_*.
+    if ! result_deserialize "$line"; then
+      printf "  \033[1;35m⚡\033[0m  \033[0;90mResultado inválido omitido por la UI.\033[0m\n\n"
+      continue
+    fi
     if ! result_validate >/dev/null 2>&1; then
       printf "  \033[1;35m⚡\033[0m  \033[0;90mResultado inválido omitido por la UI.\033[0m\n\n"
       continue
@@ -105,13 +125,20 @@ tui_display_summary() {
   local summary="$1"
 
   local total pass warn fail skip error worst_sev
-  total="$(   echo "$summary" | grep -o 'total=[^ ]*'   | cut -d= -f2)"
-  pass="$(    echo "$summary" | grep -o 'pass=[^ ]*'    | cut -d= -f2)"
-  warn="$(    echo "$summary" | grep -o 'warn=[^ ]*'    | cut -d= -f2)"
-  fail="$(    echo "$summary" | grep -o 'fail=[^ ]*'    | cut -d= -f2)"
-  skip="$(    echo "$summary" | grep -o 'skip=[^ ]*'    | cut -d= -f2)"
-  error="$(   echo "$summary" | grep -o 'error=[^ ]*'   | cut -d= -f2)"
-  worst_sev="$(echo "$summary" | grep -o 'worst_severity=[^ ]*' | cut -d= -f2)"
+  total="$(_summary_get "$summary" total)"
+  pass="$(_summary_get "$summary" pass)"
+  warn="$(_summary_get "$summary" warn)"
+  fail="$(_summary_get "$summary" fail)"
+  skip="$(_summary_get "$summary" skip)"
+  error="$(_summary_get "$summary" error)"
+  worst_sev="$(_summary_get "$summary" worst_severity)"
+
+  # La TUI es presentación, no fuente de verdad. Un resumen incompleto se
+  # representa con defaults seguros en vez de abortar toda la sesión.
+  case "$worst_sev" in
+    CRITICAL|HIGH|MEDIUM|LOW|INFO) ;;
+    *) worst_sev="INFO" ;;
+  esac
 
   local worst_color
   worst_color="$(_color_for_severity "$worst_sev")"
@@ -127,7 +154,7 @@ tui_display_summary() {
   printf "  \033[1;31m✗ Fallaron\033[0m          : %s\n" "${fail:-0}"
   printf "  \033[0;90m– Omitidos\033[0m          : %s\n" "${skip:-0}"
   printf "  \033[1;35m⚡ Errores\033[0m           : %s\n" "${error:-0}"
-  printf "  Severidad máxima   : ${worst_color}\033[1m%s\033[0m\n" "${worst_sev:-INFO}"
+  printf "  Severidad máxima   : ${worst_color}\033[1m%s\033[0m\n" "$worst_sev"
   printf "\n"
 }
 
