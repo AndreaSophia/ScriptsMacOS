@@ -11,13 +11,13 @@ _REGISTRY_COUNT=0
 registry_add() {
   local id="$1" name="$2" category="$3" version="$4"
   local criticality="$5" path="$6" requires_root="$7" timeout="$8"
-  local value
+  local dependencies="${9:-}" value
 
   # El registry usa ||| como framing interno. Ningún campo puede contener el
   # delimitador físico ni saltos de línea; aceptar esos valores corrompería las
-  # columnas o crearía registros fantasma. Fallar cerrado es preferible a
-  # registrar metadatos ambiguos.
-  for value in "$id" "$name" "$category" "$version" "$criticality" "$path" "$requires_root" "$timeout"; do
+  # columnas o crearía registros fantasma. Las dependencias viajan como CSV de
+  # IDs snake_case y por eso las comas sí son válidas únicamente en ese campo.
+  for value in "$id" "$name" "$category" "$version" "$criticality" "$path" "$requires_root" "$timeout" "$dependencies"; do
     case "$value" in
       *'|'*|*$'\n'*|*$'\r'*)
         log_error "registry" "Campo de módulo contiene caracteres no seguros para el registry: $id"
@@ -31,7 +31,7 @@ registry_add() {
     return 1
   fi
 
-  local entry="${id}|||${name}|||${category}|||${version}|||${criticality}|||${path}|||${requires_root}|||${timeout}"
+  local entry="${id}|||${name}|||${category}|||${version}|||${criticality}|||${path}|||${requires_root}|||${timeout}|||${dependencies}"
   if [ -n "$_REGISTRY" ]; then
     _REGISTRY="${_REGISTRY}"$'\n'"${entry}"
   else
@@ -55,11 +55,11 @@ EOF
 }
 
 # Como el separador lógico es |||, cut con '|' deja dos campos vacíos entre
-# valores. Los campos lógicos 1..8 están en posiciones 1,4,7,...,22.
+# valores. Los campos lógicos 1..9 están en posiciones 1,4,7,...,25.
 _registry_cut_position() {
   case "$1" in
     1) echo 1;; 2) echo 4;; 3) echo 7;; 4) echo 10;;
-    5) echo 13;; 6) echo 16;; 7) echo 19;; 8) echo 22;;
+    5) echo 13;; 6) echo 16;; 7) echo 19;; 8) echo 22;; 9) echo 25;;
     *) return 1;;
   esac
 }
@@ -82,6 +82,10 @@ EOF
 
 registry_get_path() {
   registry_get_field "$1" 6
+}
+
+registry_get_dependencies() {
+  registry_get_field "$1" 9
 }
 
 registry_get_all_ids() {
