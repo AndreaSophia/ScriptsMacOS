@@ -1,5 +1,13 @@
 #!/bin/bash
 # Meridian — core/engine.sh
+
+# Estado efímero del resolvedor de dependencias. Se reinicia en cada engine_run.
+# Se usan strings delimitados en vez de associative arrays para conservar
+# compatibilidad con Bash 3.2 incluido en macOS.
+_ENGINE_DEP_RESOLVED=""
+_ENGINE_DEP_VISITING=""
+_ENGINE_DEP_ORDER=""
+
 engine_init() {
   local output_dir="$1"
 
@@ -48,12 +56,109 @@ engine_init() {
   return 0
 }
 
-engine_run() {
-  local module_ids=("$@") id failures=0
-  if [ ${#module_ids[@]} -eq 0 ]; then
-    while IFS= read -r id; do [ -n "$id" ] && module_ids+=("$id"); done < <(registry_get_all_ids)
+_engine_dependency_reset() {
+  _ENGINE_DEP_RESOLVED=""
+  _ENGINE_DEP_VISITING=""
+  _ENGINE_DEP_ORDER=""
+}
+
+# DFS topológico sobre el registry. Una dependencia se agrega antes que el
+# módulo que la declara. Dependencias inexistentes y ciclos invalidan el plan
+# completo antes de ejecutar diagnósticos parciales.
+_engine_dependency_visit() {
+  local module_id="$1" dependencies dep
+  local dep_ids=()
+
+  if ! registry_exists "$module_id"; then
+    log_error "engine" "Módulo solicitado no registrado: $module_id"
+    return 1
   fi
-  [ ${#module_ids[@]} -gt 0 ] || { log_warn "engine" "No hay módulos disponibles"; return 1; }
+
+  case "$_ENGINE_DEP_RESOLVED" in
+    *"|${module_id}|"*) return 0 ;;
+  esac
+
+  case "$_ENGINE_DEP_VISITING" in
+    *"|${module_id}|"*)
+      log_error "engine" "Ciclo de dependencias detectado en módulo: $module_id"
+      return 1
+      ;;
+  esac
+
+  _ENGINE_DEP_VISITING="${_ENGINE_DEP_VISITING}|${module_id}|"
+  dependencies="$(registry_get_dependencies "$module_id" 2>/dev/null || true)"
+
+  if [ -n "$dependencies" ]; then
+    IFS=',' read -r -a dep_ids <<< "$dependencies"
+    for dep in "${dep_ids[@]}"; do
+      [ -z "$dep" ] && continue
+      if ! registry_exists "$dep"; then
+        log_error "engine" "Dependencia no registrada: ${module_id} requiere ${dep}"
+        _ENGINE_DEP_VISITING="${_ENGINE_DEP_VISITING//|${module_id}|/}"
+        return 1
+      fi
+      if ! _engine_dependency_visit "$dep"; then
+        _ENGINE_DEP_VISITING="${_ENGINE_DEP_VISITING//|${module_id}|/}"
+        return 1
+      fi
+    done
+  fi
+
+  _ENGINE_DEP_VISITING="${_ENGINE_DEP_VISITING//|${module_id}|/}"
+  _ENGINE_DEP_RESOLVED="${_ENGINE_DEP_RESOLVED}|${module_id}|"
+  if [ -n "$_ENGINE_DEP_ORDER" ]; then
+    _ENGINE_DEP_ORDER="${_ENGINE_DEP_ORDER}"$'\n'"${module_id}"
+  else
+    _ENGINE_DEP_ORDER="$module_id"
+  fi
+  return 0
+}
+
+_engine_resolve_dependencies() {
+  local id
+  _engine_dependency_reset
+
+  for id in "$@"; do
+    [ -z "$id" ] && continue
+    if ! _engine_dependency_visit "$id"; then
+      _engine_dependency_reset
+      return 1
+    fi
+  done
+
+  printf '%s\n' "$_ENGINE_DEP_ORDER"
+  return 0
+}
+
+engine_run() {
+  local requested_ids=("$@") module_ids=() id failures=0 ordered
+
+  if [ ${#requested_ids[@]} -eq 0 ]; then
+    while IFS= read -r id; do
+      [ -n "$id" ] && requested_ids+=("$id")
+    done < <(registry_get_all_ids)
+  fi
+  [ ${#requested_ids[@]} -gt 0 ] || { log_warn "engine" "No hay módulos disponibles"; return 1; }
+
+  if ! ordered="$(_engine_resolve_dependencies "${requested_ids[@]}")"; then
+    log_error "engine" "No se pudo construir un plan de ejecución válido por dependencias"
+    return 1
+  fi
+
+  while IFS= read -r id; do
+    [ -n "$id" ] && module_ids+=("$id")
+  done <<EOF
+$ordered
+EOF
+
+  [ ${#module_ids[@]} -gt 0 ] || {
+    log_error "engine" "El plan de ejecución quedó vacío"
+    return 1
+  }
+
+  if [ ${#module_ids[@]} -gt ${#requested_ids[@]} ]; then
+    log_info "engine" "El plan incluye dependencias adicionales (${#requested_ids[@]} solicitados → ${#module_ids[@]} a ejecutar)"
+  fi
 
   for id in "${module_ids[@]}"; do
     if ! _engine_run_module "$id"; then
