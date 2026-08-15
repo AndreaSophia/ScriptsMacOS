@@ -49,7 +49,7 @@ rule_engine_evaluate() {
 
     local rule_id field operator expected_value
     local r_severity r_explanation r_risk r_suggested_action
-    local r_repairable r_repair_risk actual_value
+    local r_repairable r_repair_risk r_repair_id actual_value
 
     rule_id="$(_rule_field "$rule" 1)"
     field="$(_rule_field "$rule" 3)"
@@ -61,6 +61,7 @@ rule_engine_evaluate() {
     r_suggested_action="$(_rule_field "$rule" 9)"
     r_repairable="$(_rule_field "$rule" 10)"
     r_repair_risk="$(_rule_field "$rule" 11)"
+    r_repair_id="$(_rule_field "$rule" 12)"
 
     actual_value="$(_result_get_field "$field")"
 
@@ -73,6 +74,16 @@ rule_engine_evaluate() {
       [ -n "$r_suggested_action" ] && RESULT_SUGGESTED_ACTION="$r_suggested_action"
       [ -n "$r_repairable" ]       && RESULT_REPAIRABLE="$r_repairable"
       [ -n "$r_repair_risk" ]      && RESULT_REPAIR_RISK="$r_repair_risk"
+
+      # Si la regla gobierna repairability también gobierna el repair_id. Esto
+      # mantiene el DiagnosticResult semánticamente completo antes de que llegue
+      # al aggregator/Repair Engine.
+      if [ "$r_repairable" = "true" ]; then
+        RESULT_REPAIR_ID="$r_repair_id"
+      elif [ "$r_repairable" = "false" ]; then
+        RESULT_REPAIR_ID=""
+      fi
+
       RESULT_RULE_TRIGGERED="$rule_id"
 
       rules_applied=$((rules_applied + 1))
