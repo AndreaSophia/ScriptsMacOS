@@ -63,3 +63,20 @@ diagnostic_service_get_results() {
 diagnostic_service_get_summary() {
   engine_get_summary
 }
+
+# diagnostic_service_get_count — Retorna el total de resultados canónicos.
+# La capa aplicación no debe consultar el aggregator directamente.
+diagnostic_service_get_count() {
+  aggregator_count
+}
+
+# diagnostic_service_get_count_by_status <status>
+# Expone métricas de sesión sin filtrar detalles internos del aggregator.
+diagnostic_service_get_count_by_status() {
+  local status="${1:-}"
+  [ -n "$status" ] || {
+    printf '%s\n' "[ERROR] diagnostic_service_get_count_by_status requiere status" >&2
+    return 1
+  }
+  aggregator_count_by_status "$status"
+}
