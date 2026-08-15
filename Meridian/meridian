@@ -190,8 +190,6 @@ _get_real_home() {
     return 0
   fi
 
-  # Evita `eval echo ~usuario`: SUDO_USER no debe convertirse en código shell.
-  # dscacheutil es nativo de macOS y respeta homes no estándar.
   local home_dir
   home_dir="$(dscacheutil -q user -a name "$user_name" 2>/dev/null | awk '/^dir: / {print $2; exit}')"
   if [ -n "$home_dir" ] && [ -d "$home_dir" ]; then
@@ -241,23 +239,17 @@ main() {
   _load_core
   _parse_args "$@"
 
-  # Una invocación sin selector desde MDM/launchd/SSH no debe bloquearse en
-  # `read`. Conservamos el menú como experiencia por defecto solo en terminal.
   if [ "$_OPT_INTERACTIVE" = "true" ] && [ ! -t 0 ]; then
     _OPT_INTERACTIVE=false
     _OPT_ALL=true
   fi
 
-  # El MVP conserva ejecución privilegiada desde el entrypoint. Los checks por
-  # módulo siguen existiendo como defensa adicional y para reutilizar el core.
   privilege_require_root
 
   local output_dir
   output_dir="$(_build_output_dir)"
 
   tui_banner
-
-  # Inicializar siempre a través del engine.
   engine_init "$output_dir"
 
   local selected_modules=() id menu_selection
@@ -297,8 +289,13 @@ main() {
 
   local txt_path="" json_path=""
   if [ "$_OPT_REPORT" = "true" ]; then
-    txt_path="$(renderer_txt_generate "$output_dir" "$results" "$summary")"
-    json_path="$(renderer_json_generate "$output_dir" "$results" "$summary")"
+    # El service es la frontera canónica de reporting: intenta todos los
+    # formatos aunque uno falle y conserva las rutas generadas con éxito.
+    if ! reporting_service_generate "$output_dir" txt json; then
+      log_warn "meridian" "La sesión completó con uno o más fallos de reporting"
+    fi
+    txt_path="$(reporting_service_get_txt_path)"
+    json_path="$(reporting_service_get_json_path)"
 
     local zip_name real_home zip_path
     zip_name="Meridian_$(hostname -s 2>/dev/null || echo unknown)_$(date '+%Y%m%d_%H%M%S').zip"
