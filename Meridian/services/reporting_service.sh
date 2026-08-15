@@ -69,10 +69,16 @@ reporting_service_generate() {
 
   local fmt failures=0 generated_path
   for fmt in "${formats[@]}"; do
+    generated_path=""
     case "$fmt" in
       txt)
         if generated_path="$(renderer_txt_generate "$output_dir" "$results" "$summary")"; then
-          REPORTING_TXT_PATH="$generated_path"
+          if [ -n "$generated_path" ]; then
+            REPORTING_TXT_PATH="$generated_path"
+          else
+            log_error "reporting_service" "Renderer TXT retornó éxito sin ruta de salida"
+            failures=$((failures + 1))
+          fi
         else
           log_error "reporting_service" "Falló renderer TXT"
           failures=$((failures + 1))
@@ -80,7 +86,12 @@ reporting_service_generate() {
         ;;
       json)
         if generated_path="$(renderer_json_generate "$output_dir" "$results" "$summary")"; then
-          REPORTING_JSON_PATH="$generated_path"
+          if [ -n "$generated_path" ]; then
+            REPORTING_JSON_PATH="$generated_path"
+          else
+            log_error "reporting_service" "Renderer JSON retornó éxito sin ruta de salida"
+            failures=$((failures + 1))
+          fi
         else
           log_error "reporting_service" "Falló renderer JSON"
           failures=$((failures + 1))
