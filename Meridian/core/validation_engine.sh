@@ -98,6 +98,16 @@ validation_engine_run() {
     return 1
   fi
 
+  # El aggregator representa el estado canónico actual de la sesión, no el
+  # historial de cambios. Tras una reparación validada, sustituimos la
+  # observación anterior por el resultado post-reparación. El historial queda
+  # preservado en audit.log.
+  if ! aggregator_replace_current_by_module_id; then
+    log_error "validation_engine" "No se pudo actualizar el estado canónico post-reparación: $module_id"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=canonical_update_failed"
+    return 1
+  fi
+
   if [ "$RESULT_STATUS" = "PASS" ]; then
     log_ok "validation_engine" "Validación exitosa: ${module_id} → ${RESULT_STATUS}"
     log_audit "validation_engine" "VALIDATION_PASSED" "module=${module_id} status=${RESULT_STATUS}"
