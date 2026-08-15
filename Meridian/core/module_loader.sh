@@ -381,20 +381,33 @@ module_loader_run() {
     return 1
   fi
 
-  result_deserialize "$serialized_result"
+  # Framing inválido no debe caer a result_validate con RESULT_* residuales del
+  # caller. Deserialización y validación son dos fronteras distintas y ambas
+  # deben superarse antes de aceptar cualquier dato producido por un módulo.
+  if ! result_deserialize "$serialized_result"; then
+    log_error "module_loader" "Módulo '${module_id}' produjo framing DiagnosticResult inválido"
+    return 1
+  fi
   if ! result_validate; then
     log_error "module_loader" "Módulo '${module_id}' produjo un DiagnosticResult inválido"
     return 1
   fi
 
   if [ "$rc" -ne 0 ]; then
+    # Un script que terminó en error no puede conservar una reparación parcial
+    # como autorizable. Normalizar a un estado interno, no reparable y validado,
+    # antes de devolver el resultado al engine.
     RESULT_STATUS="ERROR"
-    [ "$RESULT_SEVERITY" = "INFO" ] && RESULT_SEVERITY="HIGH"
+    RESULT_SEVERITY="HIGH"
     RESULT_EXIT_CODE="$rc"
-    if [ "$RESULT_TITLE" = "Diagnóstico no completado" ]; then
-      RESULT_TITLE="Error interno del módulo"
-    else
-      RESULT_TITLE="${RESULT_TITLE} (error interno rc=${rc})"
+    RESULT_TITLE="Error interno del módulo"
+    RESULT_REPAIRABLE="false"
+    RESULT_REPAIR_RISK="NONE"
+    RESULT_REPAIR_ID=""
+    RESULT_RULE_TRIGGERED=""
+    if ! result_validate; then
+      log_error "module_loader" "Módulo '${module_id}' produjo un estado de error imposible de normalizar"
+      return 1
     fi
     result_serialize
     return 0
