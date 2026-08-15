@@ -25,6 +25,15 @@ privilege_check_module() {
   local module_id="$1"
   local requires_root="$2"
 
+  # --test es un sandbox de fixtures: los módulos no deben consultar ni
+  # modificar el sistema real. Por diseño, un fixture debe poder ejercitar
+  # también módulos cuyo manifest declara requires_root=true sin elevar
+  # privilegios. Las reparaciones continúan bloqueadas por MERIDIAN_TEST_MODE
+  # en repair_engine.
+  if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ]; then
+    return 0
+  fi
+
   if [ "$requires_root" = "true" ] && ! privilege_check_root; then
     log_warn "privilege_manager" \
       "Módulo '${module_id}' requiere root — se omite (SKIP)"
