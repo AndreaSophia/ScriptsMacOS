@@ -22,7 +22,10 @@ log_error() { :; }
 log_warn() { :; }
 
 diagnostic_service_get_results() { printf '%s\n' 'fixture-result'; }
-engine_get_summary() { printf '%s\n' 'total=1 pass=1 warn=0 fail=0 skip=0 error=0 worst_severity=INFO'; }
+diagnostic_service_get_summary() { printf '%s\n' 'total=1 pass=1 warn=0 fail=0 skip=0 error=0 worst_severity=INFO'; }
+# Si reporting_service vuelve a saltarse la frontera service y toca el engine
+# directamente, este stub hace visible la regresión.
+engine_get_summary() { printf '%s\n' 'ENGINE_BOUNDARY_VIOLATION'; }
 
 # shellcheck source=/dev/null
 source "${MERIDIAN_ROOT}/services/reporting_service.sh"
@@ -31,7 +34,8 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/meridian_reporting_test.XXXXXX")" || exit
 trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
 
 # Caso 1: ambos renderers exitosos y el service conserva ambas rutas.
-renderer_txt_generate() { printf '%s\n' "$1/Executive_Report.txt"; }
+CAPTURED_SUMMARY=""
+renderer_txt_generate() { CAPTURED_SUMMARY="$3"; printf '%s\n' "$1/Executive_Report.txt"; }
 renderer_json_generate() { printf '%s\n' "$1/results.json"; }
 
 if reporting_service_generate "$TMP_ROOT" txt json; then
@@ -41,6 +45,7 @@ else
 fi
 _assert_eq "$TMP_ROOT/Executive_Report.txt" "$REPORTING_TXT_PATH" "TXT path is retained"
 _assert_eq "$TMP_ROOT/results.json" "$REPORTING_JSON_PATH" "JSON path is retained"
+_assert_eq "total=1 pass=1 warn=0 fail=0 skip=0 error=0 worst_severity=INFO" "$CAPTURED_SUMMARY" "summary comes through diagnostic service boundary"
 
 # Caso 2: TXT falla, JSON debe ejecutarse igualmente y conservar su ruta.
 TXT_CALLED=0
