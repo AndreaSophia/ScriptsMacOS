@@ -13,9 +13,51 @@ _manifest_get() {
     tr -d '\r' | head -1
 }
 
+# Lee listas YAML simples en formato bloque o inline y devuelve CSV.
+# Soporta:
+#   dependencies:
+#     - foo
+#     - bar
+# y dependencies: [foo, bar]
+# El schema de Meridian mantiene deliberadamente listas escalares simples para
+# poder parsearlas con las herramientas BSD incluidas en macOS.
+_manifest_get_list_csv() {
+  local manifest="$1" key="$2" raw item out=""
+
+  raw="$(awk -v key="$key" '
+    $0 ~ "^" key ":[[:space:]]*\\[" {
+      line=$0
+      sub("^" key ":[[:space:]]*\\[", "", line)
+      sub("\\][[:space:]]*$", "", line)
+      n=split(line, values, ",")
+      for (i=1; i<=n; i++) print values[i]
+      exit
+    }
+    $0 ~ "^" key ":[[:space:]]*$" { in_list=1; next }
+    in_list && $0 ~ "^[[:space:]]*-[[:space:]]*" {
+      line=$0
+      sub("^[[:space:]]*-[[:space:]]*", "", line)
+      print line
+      next
+    }
+    in_list && $0 ~ "^[[:space:]]*$" { next }
+    in_list { exit }
+  ' "$manifest" 2>/dev/null)"
+
+  while IFS= read -r item; do
+    item="$(printf '%s\n' "$item" | tr -d "\"'\r" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -z "$item" ] && continue
+    if [ -n "$out" ]; then out="${out},${item}"; else out="$item"; fi
+  done <<EOF
+$raw
+EOF
+
+  printf '%s\n' "$out"
+}
+
 _manifest_validate() {
   local manifest="$1" module_dir="$2" errors=0 field val
-  local id name description category version author criticality requires_root timeout repairable
+  local id name description category version author criticality requires_root timeout repairable dependencies
 
   # Mantener el runtime alineado con contracts/IModule.md. Estos campos son
   # parte del contrato, no meras recomendaciones de documentación.
@@ -37,6 +79,7 @@ _manifest_validate() {
   requires_root="$(_manifest_get "$manifest" requires_root)"
   timeout="$(_manifest_get "$manifest" timeout_seconds)"
   repairable="$(_manifest_get "$manifest" repairable)"
+  dependencies="$(_manifest_get_list_csv "$manifest" dependencies)"
 
   # id: snake_case y consistente con el nombre del directorio. El registry
   # depende de IDs deterministas; aceptar aliases silenciosos hace ambiguo el
@@ -90,6 +133,32 @@ _manifest_validate() {
     errors=$((errors + 1))
   }
 
+  # dependencies es una lista de module_id. Validamos estructura aquí; la
+  # existencia y los ciclos se resuelven después de que el registry completo
+  # ha sido construido, dentro del engine.
+  if [ -n "$dependencies" ]; then
+    local dep seen="" dep_ids=()
+    IFS=',' read -r -a dep_ids <<< "$dependencies"
+    for dep in "${dep_ids[@]}"; do
+      printf '%s\n' "$dep" | grep -qE '^[a-z][a-z0-9_]*$' || {
+        log_warn "module_loader" "Módulo '$id': dependency='$dep' no es un module_id válido"
+        errors=$((errors + 1))
+        continue
+      }
+      if [ "$dep" = "$id" ]; then
+        log_warn "module_loader" "Módulo '$id': no puede depender de sí mismo"
+        errors=$((errors + 1))
+      fi
+      case "$seen" in
+        *"|${dep}|"*)
+          log_warn "module_loader" "Módulo '$id': dependency duplicada '$dep'"
+          errors=$((errors + 1))
+          ;;
+        *) seen="${seen}|${dep}|" ;;
+      esac
+    done
+  fi
+
   # repairable es opcional por compatibilidad; ausencia equivale a false.
   case "$repairable" in
     true|false|"") ;;
@@ -132,7 +201,7 @@ _manifest_validate() {
 
 module_loader_discover() {
   local base_dir="$1" loaded=0 rejected=0 manifest module_dir
-  local id name category version criticality requires_root timeout
+  local id name category version criticality requires_root timeout dependencies
 
   if [ ! -d "$base_dir" ]; then
     log_error "module_loader" "Directorio de módulos no encontrado: $base_dir"
@@ -158,8 +227,9 @@ module_loader_discover() {
     criticality="$(_manifest_get "$manifest" criticality)"
     requires_root="$(_manifest_get "$manifest" requires_root)"
     timeout="$(_manifest_get "$manifest" timeout_seconds)"
+    dependencies="$(_manifest_get_list_csv "$manifest" dependencies)"
 
-    if registry_add "$id" "$name" "$category" "$version" "$criticality" "$module_dir" "$requires_root" "$timeout"; then
+    if registry_add "$id" "$name" "$category" "$version" "$criticality" "$module_dir" "$requires_root" "$timeout" "$dependencies"; then
       log_ok "module_loader" "Módulo cargado: ${id} (${category}) v${version}"
       loaded=$((loaded + 1))
     fi
