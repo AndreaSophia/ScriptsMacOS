@@ -6,22 +6,6 @@
 #
 # Uso:
 #   sudo meridian [opciones]
-#
-# Opciones:
-#   --module <id>    Ejecutar un módulo específico
-#   --category <cat> Ejecutar todos los módulos de una categoría
-#   --all            Ejecutar todos los módulos sin menú interactivo
-#   --test           Modo test con fixtures (sin llamadas al sistema real)
-#   --debug          Logs detallados
-#   --no-report      No generar reportes (solo mostrar en pantalla)
-#   --help           Mostrar esta ayuda
-#
-# Sin selector explícito, Meridian usa menú si stdin es interactivo y ejecuta
-# todos los módulos si se invoca desde un contexto headless.
-#
-# Compatibilidad:
-#   macOS Sonoma (14) | Sequoia (15) | Tahoe (16)
-#   Apple Silicon (arm64) | Intel (x86_64) | bash 3.2+
 # =============================================================================
 
 set -euo pipefail
@@ -250,7 +234,9 @@ main() {
   output_dir="$(_build_output_dir)"
 
   tui_banner
-  engine_init "$output_dir"
+  # La capa application no llama al engine directamente. El service mantiene
+  # la frontera canónica y permite inicializar antes del menú para poblar registry.
+  diagnostic_service_init "$output_dir"
 
   local selected_modules=() id menu_selection
 
@@ -275,22 +261,20 @@ main() {
 
   if [ ${#selected_modules[@]} -gt 0 ]; then
     _validate_requested_modules "${selected_modules[@]}" || return 2
-    engine_run "${selected_modules[@]}"
+    diagnostic_service_execute "${selected_modules[@]}"
   else
-    engine_run
+    diagnostic_service_execute
   fi
 
   local results summary
-  results="$(engine_get_results)"
-  summary="$(engine_get_summary)"
+  results="$(diagnostic_service_get_results)"
+  summary="$(diagnostic_service_get_summary)"
 
   tui_display_results "$results"
   tui_display_summary "$summary"
 
   local txt_path="" json_path=""
   if [ "$_OPT_REPORT" = "true" ]; then
-    # El service es la frontera canónica de reporting: intenta todos los
-    # formatos aunque uno falle y conserva las rutas generadas con éxito.
     if ! reporting_service_generate "$output_dir" txt json; then
       log_warn "meridian" "La sesión completó con uno o más fallos de reporting"
     fi
