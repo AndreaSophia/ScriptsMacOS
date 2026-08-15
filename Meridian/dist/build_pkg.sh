@@ -12,11 +12,16 @@
 set -euo pipefail
 
 readonly PKG_NAME="Meridian"
-readonly PKG_VERSION="$(cat "$(dirname "$0")/../VERSION" 2>/dev/null | tr -d '[:space:]' || echo '1.0.0-mvp')"
+readonly MERIDIAN_VERSION="$(cat "$(dirname "$0")/../VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
+# VERSION es la versión humana del producto y puede llevar un sufijo de
+# prerelease (por ejemplo 1.0.0-mvp). Installer necesita una versión de paquete
+# estable para comparar upgrades, por lo que usamos únicamente el prefijo
+# numérico X.Y.Z como metadata machine-readable del PKG.
+readonly PKG_VERSION="${MERIDIAN_VERSION%%-*}"
 readonly PKG_IDENTIFIER="com.itau.apple.meridian"
 readonly PKG_INSTALL_LOCATION="/usr/local/lib/meridian"
 readonly PKG_COMMAND_PATH="/usr/local/bin/meridian"
-readonly PKG_OUTPUT="${PKG_NAME}-${PKG_VERSION}.pkg"
+readonly PKG_OUTPUT="${PKG_NAME}-${MERIDIAN_VERSION}.pkg"
 readonly PAYLOAD_MANIFEST_NAME=".meridian-payload-manifest"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -65,7 +70,18 @@ _check_requirements() {
     exit 1
   }
 
-  echo "[OK]    Requisitos verificados. PKG version: ${PKG_VERSION}"
+  # Mantener una sola fuente de verdad: VERSION puede ser X.Y.Z o
+  # X.Y.Z-etiqueta, pero la porción que llega a Installer debe ser X.Y.Z.
+  printf '%s\n' "$MERIDIAN_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9._-]*)?$' || {
+    echo "[ERROR] VERSION inválida: '${MERIDIAN_VERSION}' (esperado X.Y.Z o X.Y.Z-etiqueta)" >&2
+    exit 1
+  }
+  printf '%s\n' "$PKG_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+    echo "[ERROR] Versión Installer inválida derivada de VERSION: '${PKG_VERSION}'" >&2
+    exit 1
+  }
+
+  echo "[OK]    Requisitos verificados. Meridian: ${MERIDIAN_VERSION} | PKG metadata: ${PKG_VERSION}"
 }
 
 _write_payload_manifest() {
@@ -214,7 +230,7 @@ _build_product_pkg() {
   cat > "$dist_xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>Meridian ${PKG_VERSION}</title>
+    <title>Meridian ${MERIDIAN_VERSION}</title>
     <organization>com.itau.apple</organization>
     <domains enable_localSystem="true"/>
     <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
@@ -270,9 +286,11 @@ _verify_pkg() {
   echo "  PKG preparado para Workspace ONE / Jamf"
   echo "  ${output_pkg} (${size})"
   echo ""
+  echo "  Meridian version : ${MERIDIAN_VERSION}"
+  echo "  Package version  : ${PKG_VERSION}"
   echo "  Install location : ${PKG_INSTALL_LOCATION}"
-  echo "  Command           : ${PKG_COMMAND_PATH}"
-  echo "  Ejecutar          : sudo meridian"
+  echo "  Command          : ${PKG_COMMAND_PATH}"
+  echo "  Ejecutar         : sudo meridian"
   echo "══════════════════════════════════════════════════"
 }
 
