@@ -41,7 +41,7 @@ _rule_in_set() {
 
 _rule_validate_schema() {
   local rule_id="$1" module="$2" field="$3" operator="$4" value="$5"
-  local severity="$6" repairable="$7" repair_risk="$8"
+  local severity="$6" repairable="$7" repair_risk="$8" repair_id="$9"
 
   printf '%s\n' "$rule_id" | grep -qE '^[a-z][a-z0-9_]*$' || return 1
   printf '%s\n' "$module" | grep -qE '^[a-z][a-z0-9_]*$' || return 1
@@ -63,13 +63,16 @@ _rule_validate_schema() {
   _rule_in_set "$repairable" true false || return 1
   _rule_in_set "$repair_risk" NONE LOW MEDIUM HIGH CRITICAL || return 1
 
-  # Una regla no debe declarar riesgo de reparación si no declara repairable.
-  # La autorización efectiva sigue perteneciendo al Repair Engine.
-  if [ "$repairable" = "false" ] && [ "$repair_risk" != "NONE" ]; then
-    return 1
-  fi
-  if [ "$repairable" = "true" ] && [ "$repair_risk" = "NONE" ]; then
-    return 1
+  # Una regla que habilita reparación debe entregar el identificador canónico
+  # de la acción. Sin repair_id produciría un DiagnosticResult contradictorio:
+  # repairable=true pero ninguna reparación concreta que el Repair Engine pueda
+  # vincular al resultado canónico.
+  if [ "$repairable" = "true" ]; then
+    [ "$repair_risk" != "NONE" ] || return 1
+    printf '%s\n' "$repair_id" | grep -qE '^[a-z][a-z0-9_]*$' || return 1
+  else
+    [ "$repair_risk" = "NONE" ] || return 1
+    [ -z "$repair_id" ] || return 1
   fi
 
   return 0
@@ -85,7 +88,7 @@ _rule_parse_block() {
 
   local rule_id condition_module condition_field condition_operator condition_value
   local result_severity result_explanation result_risk result_suggested_action
-  local result_repairable result_repair_risk
+  local result_repairable result_repair_risk result_repair_id
 
   rule_id="$(_yaml_val rule_id)"
   condition_module="$(_yaml_val condition_module)"
@@ -98,6 +101,7 @@ _rule_parse_block() {
   result_suggested_action="$(_yaml_val result_suggested_action)"
   result_repairable="$(_yaml_val result_repairable)"
   result_repair_risk="$(_yaml_val result_repair_risk)"
+  result_repair_id="$(_yaml_val result_repair_id)"
 
   [ -n "$rule_id" ] && [ -n "$condition_module" ] && \
     [ -n "$condition_field" ] && [ -n "$condition_operator" ] && \
@@ -108,10 +112,11 @@ _rule_parse_block() {
 
   _rule_validate_schema \
     "$rule_id" "$condition_module" "$condition_field" "$condition_operator" \
-    "$condition_value" "$result_severity" "$result_repairable" "$result_repair_risk" || return 1
+    "$condition_value" "$result_severity" "$result_repairable" "$result_repair_risk" \
+    "$result_repair_id" || return 1
 
-  # Formato interno: 11 campos separados por un solo |.
-  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+  # Formato interno: 12 campos separados por un solo |.
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
     "$(_rule_encode "$rule_id")" \
     "$(_rule_encode "$condition_module")" \
     "$(_rule_encode "$condition_field")" \
@@ -122,7 +127,8 @@ _rule_parse_block() {
     "$(_rule_encode "$result_risk")" \
     "$(_rule_encode "$result_suggested_action")" \
     "$(_rule_encode "$result_repairable")" \
-    "$(_rule_encode "$result_repair_risk")"
+    "$(_rule_encode "$result_repair_risk")" \
+    "$(_rule_encode "$result_repair_id")"
 }
 
 _rule_store_add() {
