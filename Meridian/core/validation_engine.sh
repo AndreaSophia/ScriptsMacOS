@@ -6,7 +6,7 @@
 
 validation_engine_run() {
   local module_id="$1"
-  local module_dir result_file stdout_file tmp_base serialized
+  local module_dir result_file stdout_file tmp_base serialized expected_version
 
   if ! registry_exists "$module_id"; then
     log_error "validation_engine" "Módulo no registrado: $module_id"
@@ -15,6 +15,7 @@ validation_engine_run() {
   fi
 
   module_dir="$(registry_get_path "$module_id")"
+  expected_version="$(registry_get_field "$module_id" 4)"
 
   # La validación post-reparación es parte de la frontera de seguridad del
   # contrato IModule. Si desaparece en runtime, no podemos considerar la
@@ -95,6 +96,21 @@ validation_engine_run() {
   if ! result_validate; then
     log_error "validation_engine" "validate.sh produjo un DiagnosticResult inválido para: $module_id"
     log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=invalid_result"
+    return 1
+  fi
+
+  # La validación solo puede reemplazar el estado del módulo que originó la
+  # reparación. Un validate.sh defectuoso no debe poder cambiar module_id o
+  # version y terminar reemplazando el resultado canónico de otro módulo.
+  if [ "$RESULT_MODULE_ID" != "$module_id" ]; then
+    log_error "validation_engine" "validate.sh cambió la identidad del módulo: esperado=${module_id} recibido=${RESULT_MODULE_ID}"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=identity_mismatch received_module=${RESULT_MODULE_ID}"
+    return 1
+  fi
+
+  if [ -n "$expected_version" ] && [ "$RESULT_MODULE_VERSION" != "$expected_version" ]; then
+    log_error "validation_engine" "validate.sh cambió la versión del módulo: esperado=${expected_version} recibido=${RESULT_MODULE_VERSION}"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=version_mismatch expected=${expected_version} received=${RESULT_MODULE_VERSION}"
     return 1
   fi
 
