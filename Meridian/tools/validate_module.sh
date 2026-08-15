@@ -24,6 +24,38 @@ _manifest_value() {
     tr -d '\r' | head -1
 }
 
+_manifest_list_csv() {
+  local key="$1" raw item out=""
+  raw="$(awk -v key="$key" '
+    $0 ~ "^" key ":[[:space:]]*\\[" {
+      line=$0
+      sub("^" key ":[[:space:]]*\\[", "", line)
+      sub("\\][[:space:]]*$", "", line)
+      n=split(line, values, ",")
+      for (i=1; i<=n; i++) print values[i]
+      exit
+    }
+    $0 ~ "^" key ":[[:space:]]*$" { in_list=1; next }
+    in_list && $0 ~ "^[[:space:]]*-[[:space:]]*" {
+      line=$0
+      sub("^[[:space:]]*-[[:space:]]*", "", line)
+      print line
+      next
+    }
+    in_list && $0 ~ "^[[:space:]]*$" { next }
+    in_list { exit }
+  ' "$manifest_path" 2>/dev/null)"
+
+  while IFS= read -r item; do
+    item="$(printf '%s\n' "$item" | tr -d "\"'\r" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -z "$item" ] && continue
+    if [ -n "$out" ]; then out="${out},${item}"; else out="$item"; fi
+  done <<EOF
+$raw
+EOF
+  printf '%s\n' "$out"
+}
+
 _check_field() {
   local key="$1" varname="$2" val
   val="$(_manifest_value "$key")"
@@ -117,6 +149,40 @@ if [ "$_id" = "$dir_name" ]; then
   _pass "id coincide con nombre del directorio"
 else
   _fail "id='${_id}' no coincide con directorio '${dir_name}'"
+fi
+
+printf "\n  \033[1mdependencias\033[0m\n"
+dependencies="$(_manifest_list_csv dependencies)"
+if [ -z "$dependencies" ]; then
+  _pass "sin dependencias declaradas"
+else
+  dep_seen=""
+  dep_ids=()
+  IFS=',' read -r -a dep_ids <<< "$dependencies"
+  for dep in "${dep_ids[@]}"; do
+    if printf '%s\n' "$dep" | grep -qE '^[a-z][a-z0-9_]*$'; then
+      _pass "dependency '${dep}' tiene module_id válido"
+    else
+      _fail "dependency='${dep}' no es un module_id válido"
+      continue
+    fi
+
+    if [ "$dep" = "$_id" ]; then
+      _fail "el módulo no puede depender de sí mismo"
+    fi
+
+    case "$dep_seen" in
+      *"|${dep}|"*) _fail "dependency duplicada: ${dep}" ;;
+      *) dep_seen="${dep_seen}|${dep}|" ;;
+    esac
+
+    dep_manifest="$(find "${MERIDIAN_ROOT}/modules" -path "*/${dep}/manifest.yaml" -type f -print 2>/dev/null | head -1)"
+    if [ -n "$dep_manifest" ]; then
+      _pass "dependency '${dep}' existe en el árbol de módulos"
+    else
+      _fail "dependency '${dep}' no existe en el árbol de módulos"
+    fi
+  done
 fi
 
 printf "\n  \033[1marchivos requeridos\033[0m\n"
