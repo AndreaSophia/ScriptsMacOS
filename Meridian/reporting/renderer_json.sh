@@ -63,7 +63,14 @@ renderer_json_generate() {
     local first=true line
     while IFS= read -r line; do
       [ -z "$line" ] && continue
-      result_deserialize "$line"
+
+      # Nunca validar ni serializar RESULT_* residuales si el framing de la
+      # línea actual es inválido. result_deserialize falla antes de mutar el
+      # modelo, por lo que ignorar su rc podría duplicar el resultado anterior.
+      if ! result_deserialize "$line"; then
+        log_warn "renderer_json" "DiagnosticResult con framing inválido omitido del JSON"
+        continue
+      fi
       if ! result_validate; then
         log_warn "renderer_json" "DiagnosticResult inválido omitido del JSON"
         continue
