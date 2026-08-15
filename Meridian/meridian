@@ -129,12 +129,13 @@ Meridian v${MERIDIAN_VERSION} — ${MERIDIAN_ORG}
 
 USO:
   sudo meridian [opciones]
+  meridian --test [opciones]
 
 OPCIONES:
   --module <id>    Ejecutar módulo específico (se puede repetir)
   --category <cat> Ejecutar categoría (security, edr, mdm, network)
   --all            Ejecutar todos los módulos sin menú interactivo
-  --test           Modo test — usa fixtures sin llamar al sistema real
+  --test           Sandbox de fixtures; no requiere root ni consulta el sistema real
   --debug          Logs detallados
   --no-report      Solo pantalla, sin generar archivos de reporte
   --help           Esta ayuda
@@ -157,11 +158,13 @@ EJEMPLOS:
   sudo meridian --module crowdstrike
   sudo meridian --module filevault --module certificates
   sudo meridian --category security
-  sudo meridian --all --test --debug
+  meridian --all --test --debug
 
 SALIDA:
   Ejecución interactiva con sudo:
     ~/Desktop/Meridian_<hostname>_<timestamp>/
+  Ejecución --test sin root:
+    ~/Desktop/Meridian_<hostname>_<timestamp>/ (o TMPDIR si Desktop no existe)
   Ejecución headless/root (Workspace ONE/MDM):
     /Library/Logs/Meridian/sessions/Meridian_<hostname>_<timestamp>/
 
@@ -189,10 +192,17 @@ _get_real_home() {
 
 _get_output_base() {
   # Una sesión iniciada por una persona mediante sudo pertenece a ese usuario.
-  # Un job MDM/launchd ejecutado directamente como root no debe escribir en
-  # /var/root/Desktop: usa una ubicación corporativa estable y restringida.
+  # Un sandbox --test sin root debe poder ejecutarse desde un checkout local sin
+  # escribir en /Library. Un job MDM/launchd ejecutado directamente como root
+  # usa una ubicación corporativa estable y restringida.
   if [ -n "${SUDO_USER:-}" ]; then
     printf '%s/Desktop\n' "$(_get_real_home)"
+  elif [ "${MERIDIAN_TEST_MODE:-0}" = "1" ] && ! privilege_check_root; then
+    if [ -n "${HOME:-}" ] && [ -d "${HOME}/Desktop" ]; then
+      printf '%s/Desktop\n' "$HOME"
+    else
+      printf '%s\n' "${TMPDIR:-/tmp}"
+    fi
   else
     printf '%s\n' "/Library/Logs/Meridian/sessions"
   fi
@@ -262,7 +272,11 @@ main() {
     _OPT_ALL=true
   fi
 
-  privilege_require_root
+  # La ejecución real mantiene el requisito de root. --test es un sandbox de
+  # fixtures y debe poder ejercitar el pipeline completo con mínimo privilegio.
+  if [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
+    privilege_require_root
+  fi
 
   local output_dir
   output_dir="$(_build_output_dir)"
