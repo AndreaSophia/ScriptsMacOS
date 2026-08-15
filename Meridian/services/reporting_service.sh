@@ -33,9 +33,12 @@ reporting_service_generate() {
     return 1
   }
 
+  # Reporting consume el estado exclusivamente mediante diagnostic_service.
+  # La capa service permanece como frontera canónica y evita dependencias
+  # laterales directas contra engine/aggregator desde la aplicación.
   local results summary
   results="$(diagnostic_service_get_results)"
-  summary="$(engine_get_summary)"
+  summary="$(diagnostic_service_get_summary)"
 
   local fmt failures=0 generated_path
   for fmt in "${formats[@]}"; do
