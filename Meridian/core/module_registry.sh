@@ -11,6 +11,20 @@ _REGISTRY_COUNT=0
 registry_add() {
   local id="$1" name="$2" category="$3" version="$4"
   local criticality="$5" path="$6" requires_root="$7" timeout="$8"
+  local value
+
+  # El registry usa ||| como framing interno. Ningún campo puede contener el
+  # delimitador físico ni saltos de línea; aceptar esos valores corrompería las
+  # columnas o crearía registros fantasma. Fallar cerrado es preferible a
+  # registrar metadatos ambiguos.
+  for value in "$id" "$name" "$category" "$version" "$criticality" "$path" "$requires_root" "$timeout"; do
+    case "$value" in
+      *'|'*|*$'\n'*|*$'\r'*)
+        log_error "registry" "Campo de módulo contiene caracteres no seguros para el registry: $id"
+        return 1
+        ;;
+    esac
+  done
 
   if registry_exists "$id"; then
     log_warn "registry" "Módulo duplicado ignorado: $id"
