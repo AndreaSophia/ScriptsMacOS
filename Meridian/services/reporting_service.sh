@@ -17,12 +17,21 @@ REPORTING_JSON_PATH=""
 # si al menos uno de los formatos solicitados no pudo generarse.
 # =============================================================================
 reporting_service_generate() {
-  local output_dir="$1"
+  local output_dir="${1:-}"
+  [ $# -gt 0 ] || {
+    log_error "reporting_service" "reporting_service_generate requiere directorio de salida"
+    return 1
+  }
   shift
   local formats=("$@")
 
   REPORTING_TXT_PATH=""
   REPORTING_JSON_PATH=""
+
+  if [ -z "$output_dir" ]; then
+    log_error "reporting_service" "Directorio de reportes vacío"
+    return 1
+  fi
 
   if [ ${#formats[@]} -eq 0 ]; then
     formats=("txt" "json")
@@ -36,9 +45,27 @@ reporting_service_generate() {
   # Reporting consume el estado exclusivamente mediante diagnostic_service.
   # La capa service permanece como frontera canónica y evita dependencias
   # laterales directas contra engine/aggregator desde la aplicación.
+  #
+  # No confiamos en `set -e` para propagar estas lecturas: una sesión sin
+  # resultados o un service defectuoso debe producir un error explícito y
+  # determinista, no una salida parcial dependiente del contexto del caller.
   local results summary
-  results="$(diagnostic_service_get_results)"
-  summary="$(diagnostic_service_get_summary)"
+  if ! results="$(diagnostic_service_get_results)"; then
+    log_error "reporting_service" "No se pudieron obtener resultados de la sesión"
+    return 1
+  fi
+  if [ -z "$results" ]; then
+    log_error "reporting_service" "La sesión no contiene resultados para reportar"
+    return 1
+  fi
+  if ! summary="$(diagnostic_service_get_summary)"; then
+    log_error "reporting_service" "No se pudo obtener el resumen de la sesión"
+    return 1
+  fi
+  if [ -z "$summary" ]; then
+    log_error "reporting_service" "Resumen de sesión vacío"
+    return 1
+  fi
 
   local fmt failures=0 generated_path
   for fmt in "${formats[@]}"; do
