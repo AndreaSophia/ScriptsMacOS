@@ -24,8 +24,6 @@ engine_run() {
   fi
   [ ${#module_ids[@]} -gt 0 ] || { log_warn "engine" "No hay módulos disponibles"; return 1; }
 
-  # Un módulo roto no debe abortar una sesión de diagnóstico completa. Cada
-  # fallo se convierte en DiagnosticResult ERROR y se continúa con el resto.
   for id in "${module_ids[@]}"; do
     if ! _engine_run_module "$id"; then
       failures=$((failures + 1))
@@ -64,8 +62,6 @@ _engine_run_module() {
   local tmp_base="${TMPDIR:-/tmp}" capture
   capture="$(mktemp "${tmp_base%/}/meridian_engine.XXXXXX")" || return 1
 
-  # module_loader_run puede retornar no-cero para errores de infraestructura.
-  # Capturarlo explícitamente evita que `set -e` termine el proceso principal.
   if module_loader_run "$module_id" "$MERIDIAN_EVIDENCE_DIR" >"$capture"; then
     run_rc=0
   else
@@ -86,7 +82,18 @@ _engine_run_module() {
     return 0
   fi
 
-  result_deserialize "$serialized"
+  # No evaluar reglas ni mutar el aggregator si el framing v2 está corrupto.
+  # result_deserialize valida que existan exactamente los 19 campos canónicos.
+  if ! result_deserialize "$serialized"; then
+    log_error "engine" "Módulo '${module_id}' produjo framing DiagnosticResult inválido"
+    if ! _engine_add_internal_error "$module_id" \
+      "DiagnosticResult con framing inválido" \
+      "El resultado serializado no cumple el formato canónico v2."; then
+      return 1
+    fi
+    return 0
+  fi
+
   rule_engine_evaluate "$module_id"
   if ! aggregator_add; then
     log_error "engine" "Resultado de '${module_id}' rechazado por aggregator"
