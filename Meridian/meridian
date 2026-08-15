@@ -9,6 +9,9 @@
 # =============================================================================
 
 set -euo pipefail
+# Los diagnósticos pueden contener inventario y evidencia sensible. No heredamos
+# un umask permisivo del shell, Workspace ONE o launchd.
+umask 027
 
 MERIDIAN_ROOT="$(cd "$(dirname "$0")" && pwd)"
 export MERIDIAN_ROOT
