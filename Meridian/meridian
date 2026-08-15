@@ -338,7 +338,7 @@ main() {
   _finalize_user_output_ownership "$output_dir" "$zip_path"
 
   log_audit "meridian" "SESSION_COMPLETED" \
-    "modules=$(aggregator_count) pass=$(aggregator_count_by_status PASS) fail=$(aggregator_count_by_status FAIL)"
+    "modules=$(diagnostic_service_get_count) pass=$(diagnostic_service_get_count_by_status PASS) fail=$(diagnostic_service_get_count_by_status FAIL)"
 }
 
 main "$@"
