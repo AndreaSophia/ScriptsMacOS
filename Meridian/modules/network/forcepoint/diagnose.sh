@@ -22,11 +22,28 @@ _FP_AGENT_IDS=(
 )
 _FP_PROCESS_PATTERNS="[F]orcepoint|[W]ebsense|[w]sdlpd|[E]ndPointClassifier|[F]PEPAgent|[f]pneone|[f]ppnehost"
 
+_launchd_output=""
+_systemext_output=""
+_proc=""
+_proxy_output=""
+_install_found=false
+
 if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ] && [ -n "${MERIDIAN_FIXTURE_DIR:-}" ]; then
+  # El sandbox debe depender exclusivamente de fixtures. Nunca inspeccionamos
+  # procesos, rutas, extensiones o proxy del host durante --test.
   _launchd_output="$(cat "${MERIDIAN_FIXTURE_DIR}/forcepoint_running.txt" 2>/dev/null || echo "")"
   _systemext_output="$(cat "${MERIDIAN_FIXTURE_DIR}/forcepoint_systemextension.txt" 2>/dev/null || echo "")"
+  _proc="$(cat "${MERIDIAN_FIXTURE_DIR}/forcepoint_processes.txt" 2>/dev/null || echo "")"
+  _proxy_output="$(cat "${MERIDIAN_FIXTURE_DIR}/forcepoint_proxy.txt" 2>/dev/null || echo "")"
+
+  # La instalación se modela explícitamente; la mera existencia de rutas en el
+  # Mac anfitrión no puede convertir un fixture limpio en una detección positiva.
+  if [ -f "${MERIDIAN_FIXTURE_DIR}/forcepoint_installed.txt" ]; then
+    case "$(cat "${MERIDIAN_FIXTURE_DIR}/forcepoint_installed.txt" 2>/dev/null | tr '[:upper:]' '[:lower:]')" in
+      1|true|yes|si|sí|installed) _install_found=true ;;
+    esac
+  fi
 else
-  _launchd_output=""
   for _agent_id in "${_FP_AGENT_IDS[@]}"; do
     _match="$(launchctl list 2>/dev/null | grep -i "$_agent_id" || true)"
     if [ -n "$_match" ]; then
@@ -34,18 +51,18 @@ else
       break
     fi
   done
+
   _systemext_output="$(systemextensionsctl list 2>/dev/null | grep -iE 'forcepoint|websense|fpneone|fppnehost' || true)"
+  _proc="$(ps aux 2>/dev/null | grep -E "$_FP_PROCESS_PATTERNS" | grep -v grep | head -10 || true)"
+  _proxy_output="$(scutil --proxy 2>/dev/null | grep -iE 'HTTPProxy|HTTPSProxy|ProxyAutoConfig' | head -10 || true)"
+
+  for _path in "${_FP_PATHS[@]}"; do
+    if [ -e "$_path" ]; then
+      _install_found=true
+      break
+    fi
+  done
 fi
-
-_proc="$(ps aux 2>/dev/null | grep -E "$_FP_PROCESS_PATTERNS" | grep -v grep | head -10 || true)"
-
-_install_found=false
-for _path in "${_FP_PATHS[@]}"; do
-  if [ -e "$_path" ]; then
-    _install_found=true
-    break
-  fi
-done
 
 _launchd_active=false
 [ -n "$_launchd_output" ] && _launchd_active=true
@@ -57,6 +74,7 @@ _process_active=false
 {
   echo "# Forcepoint — estado"
   echo "# Generado: $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "# Fuente: $([ "${MERIDIAN_TEST_MODE:-0}" = "1" ] && echo 'fixtures simulados' || echo 'sistema real')"
   echo
   echo "## Instalación detectada: $([ "$_install_found" = true ] && echo 'Sí' || echo 'No')"
   echo
@@ -70,10 +88,21 @@ _process_active=false
   echo "${_systemext_output:-Ninguna detectada}"
   echo
   echo "## Proxy del sistema:"
-  scutil --proxy 2>/dev/null | grep -iE 'HTTPProxy|HTTPSProxy|ProxyAutoConfig' | head -10 || true
+  echo "${_proxy_output:-Sin señal de proxy en la fuente observada}"
   echo
   echo "## Artefactos DLP conocidos:"
-  for _path in "${_FP_PATHS[@]}"; do [ -e "$_path" ] && echo "$_path"; done
+  if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ]; then
+    [ "$_install_found" = true ] && echo "Instalación simulada por fixture" || echo "Ninguno"
+  else
+    _artifact_count=0
+    for _path in "${_FP_PATHS[@]}"; do
+      if [ -e "$_path" ]; then
+        echo "$_path"
+        _artifact_count=$((_artifact_count + 1))
+      fi
+    done
+    [ "$_artifact_count" -gt 0 ] || echo "Ninguno"
+  fi
 } > "$_evidence_file" 2>/dev/null
 
 RESULT_RAW_OUTPUT="installed=${_install_found} process=${_process_active} launchd=${_launchd_active} systemext=${_systemext_active}"
