@@ -94,7 +94,7 @@ logger_init "${OUTPUT_DIR}/diagnostic.log"
 module_loader_discover "${MERIDIAN_ROOT}/modules" 2>/dev/null
 rule_loader_load "${MERIDIAN_ROOT}/rules/definitions" 2>/dev/null
 
-assert_eq "6 módulos MVP cargados" "6" "$(registry_count)"
+assert_eq "7 módulos actuales cargados" "7" "$(registry_count)"
 assert_eq "10 reglas actuales cargadas" "10" "$(rule_loader_count)"
 
 printf "\n  Ejecutando módulo filevault (fixture: disabled)...\n"
@@ -112,6 +112,26 @@ fi
 assert_eq "filevault: status=FAIL en modo test (fixture disabled)" "FAIL" "$fv_status"
 assert_eq "filevault: regla eleva severity a CRITICAL" "CRITICAL" "$fv_severity"
 assert_eq "filevault: rule_triggered=filevault_disabled" "filevault_disabled" "$fv_rule"
+
+printf "\n  Ejecutando módulo secure_token (fixture: admin mixto)...\n"
+_engine_run_module "secure_token" 2>/dev/null
+st_line="$(_find_result secure_token)"
+if [ -n "$st_line" ]; then
+  result_deserialize "$st_line"
+  st_status="$RESULT_STATUS"
+  st_evidence="$RESULT_EVIDENCE"
+else
+  st_status=""; st_evidence=""
+fi
+assert_eq "secure_token: admin mixto produce WARN" "WARN" "$st_status"
+case "$st_evidence" in
+  *"Secure Token ENABLED"*"Secure Token DISABLED"*)
+    printf "  \033[1;32m✓\033[0m  secure_token: evidencia conserva estados por administrador\n"
+    _pass=$((_pass+1)) ;;
+  *)
+    printf "  \033[1;31m✗\033[0m  secure_token: evidencia incompleta\n" >&2
+    _fail=$((_fail+1)) ;;
+esac
 
 printf "\n  Ejecutando módulo crowdstrike (fixture: not_found)...\n"
 _engine_run_module "crowdstrike" 2>/dev/null
@@ -134,7 +154,7 @@ case "$cs_status" in
 esac
 
 count="$(aggregator_count)"
-if [ "$count" -ge 2 ]; then
+if [ "$count" -ge 3 ]; then
   printf "  \033[1;32m✓\033[0m  aggregator acumula %s resultados\n" "$count"
   _pass=$((_pass+1))
 else
@@ -158,7 +178,7 @@ assert_file_contains "JSON contiene status FAIL" '"FAIL"' "${OUTPUT_DIR}/results
 assert_file_exists "diagnostic.log creado" "${OUTPUT_DIR}/diagnostic.log"
 
 printf "\n  Validando módulos con validate_module.sh...\n"
-for mod_id in filevault certificates crowdstrike cisco_umbrella forcepoint workspace_one; do
+for mod_id in filevault certificates secure_token crowdstrike cisco_umbrella forcepoint workspace_one; do
   if bash "${MERIDIAN_ROOT}/tools/validate_module.sh" "$mod_id" >/dev/null 2>&1; then
     printf "  \033[1;32m✓\033[0m  validate_module: %s\n" "$mod_id"
     _pass=$((_pass+1))
