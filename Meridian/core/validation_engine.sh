@@ -6,7 +6,7 @@
 
 validation_engine_run() {
   local module_id="$1"
-  local module_dir result_file stdout_file tmp_base serialized expected_version
+  local module_dir result_file stdout_file tmp_base serialized expected_version worker_rc
 
   if ! registry_exists "$module_id"; then
     log_error "validation_engine" "Módulo no registrado: $module_id"
@@ -35,7 +35,11 @@ validation_engine_run() {
     return 1
   }
 
-  (
+  # El worker completo es una frontera recuperable. No solo validate.sh puede
+  # fallar: también pueden hacerlo la carga del modelo/logger o la serialización.
+  # Ejecutarlo dentro de un `if` impide que `set -e` heredado del entrypoint
+  # cierre Meridian antes de limpiar temporales y auditar el fallo real.
+  if (
     source "${MERIDIAN_ROOT}/core/result_model.sh"
     source "${MERIDIAN_ROOT}/logging/logger.sh"
 
@@ -50,8 +54,8 @@ validation_engine_run() {
     RESULT_MODULE_VERSION="$(grep '^version:' "${module_dir}/manifest.yaml" 2>/dev/null | sed 's/^version:[[:space:]]*//' | tr -d '\r\"' | head -1)"
 
     result_time_start
-    # `set -e` viene heredado del entrypoint. El retorno de validate.sh es parte
-    # del protocolo, no una razón para terminar el proceso antes de serializar.
+    # El retorno de validate.sh es parte del protocolo. Se captura para poder
+    # serializar un DiagnosticResult incluso cuando el validator retorna != 0.
     local validate_rc
     if source "${module_dir}/validate.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
       validate_rc=0
@@ -72,10 +76,22 @@ validation_engine_run() {
 
     result_serialize > "$result_file"
     exit 0
-  )
+  ); then
+    worker_rc=0
+  else
+    worker_rc=$?
+  fi
 
   if [ -s "$stdout_file" ]; then
     cat "$stdout_file" >&2
+  fi
+
+  if [ "$worker_rc" -ne 0 ]; then
+    rm -f "$result_file" "$stdout_file"
+    log_error "validation_engine" "Falló la infraestructura de validación para ${module_id} (rc=${worker_rc})"
+    log_audit "validation_engine" "VALIDATION_ERROR" \
+      "module=${module_id} reason=validator_execution_failed rc=${worker_rc}"
+    return 1
   fi
 
   serialized="$(cat "$result_file" 2>/dev/null)"
