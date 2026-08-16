@@ -147,5 +147,46 @@ else
 fi
 _assert_eq "" "$REPORTING_TXT_PATH" "symlink artifact is not published"
 
+# Caso 10: el propio directorio de reporting no puede ser un symlink. Esta
+# frontera puede correr como root y no debe aceptar redirección de escritura.
+REAL_DIR="$TMP_ROOT/real-dir"
+LINK_DIR="$TMP_ROOT/link-dir"
+mkdir "$REAL_DIR" || exit 1
+ln -s "$REAL_DIR" "$LINK_DIR" || exit 1
+renderer_txt_generate() {
+  : > "$1/linked-report.txt" || return 1
+  printf '%s\n' "$1/linked-report.txt"
+}
+if reporting_service_generate "$LINK_DIR" txt; then
+  _fail "reporting service rejects symlink output directory"
+else
+  _pass "reporting service rejects symlink output directory"
+fi
+[ ! -e "$REAL_DIR/linked-report.txt" ] && _pass "symlink output directory is rejected before renderer write" || _fail "symlink output directory is rejected before renderer write"
+
+# Caso 11: mkdir y dirname falsos en PATH no deben participar en la frontera.
+# El service fija /bin/mkdir y valida padres con parameter expansion + builtins.
+HOSTILE_BIN="$TMP_ROOT/hostile-bin"
+HOSTILE_MARKER="$TMP_ROOT/hostile-called"
+mkdir "$HOSTILE_BIN" || exit 1
+printf '%s\n' '#!/bin/bash' "printf 'called\\n' >> '$HOSTILE_MARKER'" > "$HOSTILE_BIN/mkdir"
+printf '%s\n' '#!/bin/bash' "printf 'called\\n' >> '$HOSTILE_MARKER'" > "$HOSTILE_BIN/dirname"
+chmod +x "$HOSTILE_BIN/mkdir" "$HOSTILE_BIN/dirname" || exit 1
+SAFE_PATH="$PATH"
+PATH="$HOSTILE_BIN:$PATH"
+NEW_REPORT_DIR="$TMP_ROOT/new-report-dir"
+renderer_txt_generate() {
+  : > "$1/path-safe.txt" || return 1
+  printf '%s\n' "$1/path-safe.txt"
+}
+if reporting_service_generate "$NEW_REPORT_DIR" txt; then
+  _pass "reporting service ignores hostile PATH filesystem tools"
+else
+  _fail "reporting service ignores hostile PATH filesystem tools"
+fi
+PATH="$SAFE_PATH"
+[ ! -e "$HOSTILE_MARKER" ] && _pass "hostile PATH tools were not executed" || _fail "hostile PATH tools were not executed"
+_assert_eq "$NEW_REPORT_DIR/path-safe.txt" "$REPORTING_TXT_PATH" "trusted mkdir path still publishes valid artifact"
+
 printf '\nTests: %s | Failures: %s\n' "$TESTS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]
