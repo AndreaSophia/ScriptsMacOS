@@ -39,9 +39,13 @@ validation_engine_run() {
   # fallar: también pueden hacerlo la carga del modelo/logger o la serialización.
   # Ejecutarlo dentro de un `if` impide que `set -e` heredado del entrypoint
   # cierre Meridian antes de limpiar temporales y auditar el fallo real.
+  #
+  # Importante: Bash puede suprimir `errexit` dentro de comandos usados como
+  # condición de `if`. Por eso las piezas de infraestructura críticas tienen
+  # guardas explícitas y códigos propios; no confiamos en `set -e` para ellas.
   if (
-    source "${MERIDIAN_ROOT}/core/result_model.sh"
-    source "${MERIDIAN_ROOT}/logging/logger.sh"
+    source "${MERIDIAN_ROOT}/core/result_model.sh" || exit 70
+    source "${MERIDIAN_ROOT}/logging/logger.sh" || exit 71
 
     export MERIDIAN_MODULE_DIR="$module_dir"
     export MERIDIAN_EVIDENCE_DIR="${MERIDIAN_EVIDENCE_DIR:-/tmp}"
@@ -49,11 +53,11 @@ validation_engine_run() {
     export MERIDIAN_TEST_MODE="${MERIDIAN_TEST_MODE:-0}"
     export MERIDIAN_FIXTURE_DIR="${MERIDIAN_FIXTURE_DIR:-}"
 
-    result_init
+    result_init || exit 72
     RESULT_MODULE_ID="$module_id"
     RESULT_MODULE_VERSION="$(grep '^version:' "${module_dir}/manifest.yaml" 2>/dev/null | sed 's/^version:[[:space:]]*//' | tr -d '\r\"' | head -1)"
 
-    result_time_start
+    result_time_start || exit 73
     # El retorno de validate.sh es parte del protocolo. Se captura para poder
     # serializar un DiagnosticResult incluso cuando el validator retorna != 0.
     local validate_rc
@@ -62,7 +66,7 @@ validation_engine_run() {
     else
       validate_rc=$?
     fi
-    result_time_end
+    result_time_end || exit 74
 
     if [ "$validate_rc" -ne 0 ] && [ "${RESULT_EXIT_CODE:-0}" -eq 0 ] 2>/dev/null; then
       RESULT_EXIT_CODE="$validate_rc"
@@ -74,7 +78,7 @@ validation_engine_run() {
       RESULT_TITLE="Validación terminó con error interno"
     fi
 
-    result_serialize > "$result_file"
+    result_serialize > "$result_file" || exit 75
     exit 0
   ); then
     worker_rc=0
