@@ -10,11 +10,31 @@ readonly _VALID_SEVERITIES="INFO LOW MEDIUM HIGH CRITICAL"
 readonly _VALID_REPAIR_RISKS="NONE LOW MEDIUM HIGH CRITICAL"
 readonly _RESULT_V2_FIELDS=19
 
+# DiagnosticResult es una frontera canónica que puede ejecutarse dentro de un
+# proceso privilegiado. Las utilidades auxiliares no se resuelven mediante un
+# PATH heredado/controlable por el caller.
+_RESULT_DATE="/bin/date"
+_RESULT_HOSTNAME="/bin/hostname"
+_RESULT_GREP="/usr/bin/grep"
+_RESULT_CUT="/usr/bin/cut"
+_RESULT_AWK="/usr/bin/awk"
+
+_result_require_system_tools() {
+  local tool
+  for tool in "$_RESULT_DATE" "$_RESULT_HOSTNAME" "$_RESULT_GREP" "$_RESULT_CUT" "$_RESULT_AWK"; do
+    [ -x "$tool" ] || {
+      printf '%s\n' "[result_model] ERROR: utilidad requerida no disponible: $tool" >&2
+      return 1
+    }
+  done
+  return 0
+}
+
 result_init() {
   RESULT_MODULE_ID=""
   RESULT_MODULE_VERSION=""
-  RESULT_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  RESULT_HOSTNAME="$(hostname -s 2>/dev/null || echo 'unknown')"
+  RESULT_TIMESTAMP="$("$_RESULT_DATE" -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s\n' '1970-01-01T00:00:00Z')"
+  RESULT_HOSTNAME="$("$_RESULT_HOSTNAME" -s 2>/dev/null || printf '%s\n' 'unknown')"
   RESULT_STATUS="ERROR"
   RESULT_SEVERITY="HIGH"
   RESULT_TITLE="Diagnóstico no completado"
@@ -35,6 +55,8 @@ result_init() {
 result_validate() {
   local errors=0 field val s status_ok sev_ok risk_ok
 
+  _result_require_system_tools || return 1
+
   for field in RESULT_MODULE_ID RESULT_MODULE_VERSION RESULT_TIMESTAMP \
                RESULT_HOSTNAME RESULT_STATUS RESULT_SEVERITY RESULT_TITLE \
                RESULT_DESCRIPTION RESULT_EXPLANATION RESULT_RISK \
@@ -46,17 +68,17 @@ result_validate() {
     fi
   done
 
-  printf '%s\n' "$RESULT_MODULE_ID" | grep -qE '^[a-z][a-z0-9_]*$' || {
+  printf '%s\n' "$RESULT_MODULE_ID" | "$_RESULT_GREP" -qE '^[a-z][a-z0-9_]*$' || {
     echo "[result_validate] ERROR: module_id inválido: ${RESULT_MODULE_ID}" >&2
     errors=$((errors + 1))
   }
 
-  printf '%s\n' "$RESULT_MODULE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+  printf '%s\n' "$RESULT_MODULE_VERSION" | "$_RESULT_GREP" -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
     echo "[result_validate] ERROR: module_version debe ser semver X.Y.Z: ${RESULT_MODULE_VERSION}" >&2
     errors=$((errors + 1))
   }
 
-  printf '%s\n' "$RESULT_TIMESTAMP" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' || {
+  printf '%s\n' "$RESULT_TIMESTAMP" | "$_RESULT_GREP" -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' || {
     echo "[result_validate] ERROR: timestamp no cumple ISO8601 UTC: ${RESULT_TIMESTAMP}" >&2
     errors=$((errors + 1))
   }
@@ -112,7 +134,7 @@ result_validate() {
     if [ -z "$RESULT_REPAIR_ID" ]; then
       echo "[result_validate] ERROR: repairable=true sin repair_id" >&2
       errors=$((errors + 1))
-    elif ! printf '%s\n' "$RESULT_REPAIR_ID" | grep -qE '^[a-z][a-z0-9_]*$'; then
+    elif ! printf '%s\n' "$RESULT_REPAIR_ID" | "$_RESULT_GREP" -qE '^[a-z][a-z0-9_]*$'; then
       echo "[result_validate] ERROR: repair_id inválido: ${RESULT_REPAIR_ID}" >&2
       errors=$((errors + 1))
     fi
@@ -131,11 +153,11 @@ result_validate() {
     fi
   fi
 
-  echo "$RESULT_EXECUTION_TIME_MS" | grep -qE '^[0-9]+$' || {
+  echo "$RESULT_EXECUTION_TIME_MS" | "$_RESULT_GREP" -qE '^[0-9]+$' || {
     echo "[result_validate] ERROR: execution_time_ms no entero" >&2
     errors=$((errors + 1))
   }
-  echo "$RESULT_EXIT_CODE" | grep -qE '^-?[0-9]+$' || {
+  echo "$RESULT_EXIT_CODE" | "$_RESULT_GREP" -qE '^-?[0-9]+$' || {
     echo "[result_validate] ERROR: exit_code no entero" >&2
     errors=$((errors + 1))
   }
@@ -186,7 +208,7 @@ result_serialize() {
 
 _result_field() {
   local line="$1" field="$2" raw
-  raw="$(printf '%s\n' "$line" | cut -d'|' -f"$field")"
+  raw="$(printf '%s\n' "$line" | "$_RESULT_CUT" -d'|' -f"$field")"
   _result_decode "$raw"
 }
 
@@ -196,7 +218,8 @@ _result_field() {
 _result_v2_frame_valid() {
   local line="$1" count
   [ -n "$line" ] || return 1
-  count="$(printf '%s\n' "$line" | awk -F'|' '{print NF}')"
+  _result_require_system_tools || return 1
+  count="$(printf '%s\n' "$line" | "$_RESULT_AWK" -F'|' '{print NF}')"
   [ "$count" -eq "$_RESULT_V2_FIELDS" ] 2>/dev/null
 }
 
@@ -230,12 +253,12 @@ result_deserialize() {
 }
 
 result_time_start() {
-  _RESULT_TIME_START="$(date +%s 2>/dev/null || echo 0)"
+  _RESULT_TIME_START="$("$_RESULT_DATE" +%s 2>/dev/null || printf '%s\n' 0)"
 }
 
 result_time_end() {
   local end diff
-  end="$(date +%s 2>/dev/null || echo 0)"
+  end="$("$_RESULT_DATE" +%s 2>/dev/null || printf '%s\n' 0)"
   diff=$(( end - ${_RESULT_TIME_START:-0} ))
   [ "$diff" -lt 0 ] 2>/dev/null && diff=0
   RESULT_EXECUTION_TIME_MS=$(( diff * 1000 ))
