@@ -83,6 +83,16 @@ _REGISTERED=1
 assert_fail "rechaza validator ausente" validation_engine_run filevault
 assert_contains "audita validator ausente" "reason=validator_unavailable" "$MERIDIAN_AUDIT_LOG"
 
+# Un validator privilegiado no puede ser un symlink. El destino podría cambiar
+# después del registro del módulo y sacar la ejecución fuera del árbol confiable.
+external_validator="${TMP_ROOT}/external_validate.sh"
+printf '%s\n' 'return 0' > "$external_validator"
+ln -s "$external_validator" "${_MODULE_DIR}/validate.sh"
+: > "$MERIDIAN_AUDIT_LOG"
+assert_fail "rechaza validate.sh symlink" validation_engine_run filevault
+assert_contains "audita validate.sh symlink" "reason=validator_symlink_rejected" "$MERIDIAN_AUDIT_LOG"
+rm -f "${_MODULE_DIR}/validate.sh"
+
 # Un fallo de infraestructura dentro del worker debe regresar control al caller,
 # auditarse y limpiar los temporales aunque el entrypoint use `set -e`.
 cat > "${_MODULE_DIR}/manifest.yaml" <<'EOF'
