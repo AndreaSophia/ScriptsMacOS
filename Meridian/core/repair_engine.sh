@@ -10,13 +10,14 @@
 #  - HIGH y CRITICAL permanecen bloqueados por privilege_manager en el MVP
 #  - MERIDIAN_TEST_MODE nunca ejecuta cambios reales
 #  - la confirmación humana se delega a la frontera UI canónica
+#  - repair.sh debe ser un archivo regular no-symlink ejecutado por /bin/bash
 # =============================================================================
 
 repair_engine_run() {
   local module_id="$1"
   local requested_repair_id="$2"
   local requested_repair_risk="${3:-}"
-  local module_dir requires_root serialized repair_rc module_name
+  local module_dir repair_path requires_root serialized repair_rc module_name
 
   if ! registry_exists "$module_id"; then
     log_error "repair_engine" "Módulo no registrado: $module_id"
@@ -30,8 +31,18 @@ repair_engine_run() {
   fi
 
   module_dir="$(registry_get_path "$module_id")"
-  if [ -z "$module_dir" ] || [ ! -f "${module_dir}/repair.sh" ]; then
+  repair_path="${module_dir}/repair.sh"
+  if [ -z "$module_dir" ] || [ ! -f "$repair_path" ]; then
     log_error "repair_engine" "repair.sh no encontrado para módulo: $module_id"
+    return 1
+  fi
+
+  # Una reparación puede modificar el sistema como root. No seguimos symlinks
+  # en la ruta del módulo ni en repair.sh: el ejecutable autorizado debe ser el
+  # archivo regular que fue registrado dentro del árbol de Meridian.
+  if [ -L "$module_dir" ] || [ -L "$repair_path" ]; then
+    log_error "repair_engine" "Ruta de reparación no confiable para módulo: $module_id"
+    log_audit "repair_engine" "REPAIR_BLOCKED" "module=${module_id} reason=repair_symlink_rejected"
     return 1
   fi
 
@@ -118,7 +129,9 @@ repair_engine_run() {
 
   # Un rc != 0 es un resultado esperado del protocolo de reparación. Se captura
   # dentro de un if para impedir que `set -e` cierre Meridian antes del audit.
-  if bash "${module_dir}/repair.sh" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
+  # Se usa el intérprete del sistema por ruta absoluta: una reparación root no
+  # debe depender de PATH ni poder resolver un `bash` ajeno al macOS base.
+  if /bin/bash "$repair_path" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
     repair_rc=0
   else
     repair_rc=$?
