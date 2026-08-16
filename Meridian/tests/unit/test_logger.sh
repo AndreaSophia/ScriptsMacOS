@@ -1,7 +1,8 @@
 #!/bin/bash
 # =============================================================================
 # Meridian — tests/unit/test_logger.sh
-# Regresión para integridad y frontera de destino del audit log.
+# Regresión para integridad y fronteras de destino del logger.
+# Diseñado para Bash 3.2+; pendiente de ejecución en laboratorio macOS.
 # =============================================================================
 
 MERIDIAN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -72,6 +73,46 @@ else
   assert_eq "audit: symlink de destino es rechazado" "rejected" "rejected"
 fi
 assert_eq "audit: rechazo de symlink no modifica el target" "sentinel" "$(cat "$real_target")"
+
+# diagnostic.log es un artefacto de sesión nuevo: logger_init no debe truncar
+# un archivo preexistente ni seguir symlinks de archivo/directorio.
+session_dir="${_tmp_dir}/session"
+session_log="${session_dir}/diagnostic.log"
+if logger_init "$session_log" >/dev/null 2>&1; then
+  assert_eq "session log: destino nuevo se inicializa" "created" "created"
+else
+  assert_eq "session log: destino nuevo se inicializa" "created" "failed"
+fi
+printf '%s\n' 'preserve-me' >> "$session_log"
+
+if logger_init "$session_log" >/dev/null 2>&1; then
+  assert_eq "session log: archivo preexistente se rechaza" "rejected" "accepted"
+else
+  assert_eq "session log: archivo preexistente se rechaza" "rejected" "rejected"
+fi
+assert_contains "session log: rechazo no trunca contenido" "preserve-me" "$(cat "$session_log")"
+
+session_real_target="${_tmp_dir}/session-target.log"
+session_link="${_tmp_dir}/session-link.log"
+printf '%s\n' 'session-sentinel' > "$session_real_target"
+ln -s "$session_real_target" "$session_link" || exit 1
+if logger_init "$session_link" >/dev/null 2>&1; then
+  assert_eq "session log: symlink de archivo se rechaza" "rejected" "accepted"
+else
+  assert_eq "session log: symlink de archivo se rechaza" "rejected" "rejected"
+fi
+assert_eq "session log: symlink no modifica target" "session-sentinel" "$(cat "$session_real_target")"
+
+real_dir="${_tmp_dir}/real-log-dir"
+link_dir="${_tmp_dir}/linked-log-dir"
+mkdir -p "$real_dir"
+ln -s "$real_dir" "$link_dir" || exit 1
+if logger_init "${link_dir}/diagnostic.log" >/dev/null 2>&1; then
+  assert_eq "session log: directorio symlink se rechaza" "rejected" "accepted"
+else
+  assert_eq "session log: directorio symlink se rechaza" "rejected" "rejected"
+fi
+assert_eq "session log: directorio symlink no crea archivo" "absent" "$([ -e "${real_dir}/diagnostic.log" ] && printf present || printf absent)"
 
 printf "\n  Resultado: %d OK, %d FAIL\n\n" "$_pass" "$_fail"
 [ "$_fail" -eq 0 ]
