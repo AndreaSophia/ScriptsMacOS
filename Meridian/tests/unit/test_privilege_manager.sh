@@ -42,6 +42,8 @@ assert_fail() {
 privilege_check_root() { return 1; }
 
 export MERIDIAN_TEST_MODE=0
+assert_fail "root requirement devuelve control al caller sin privilegios" \
+  privilege_require_root
 assert_fail "módulo root se bloquea en ejecución real sin privilegios" \
   privilege_check_module filevault true
 assert_pass "módulo no-root se permite en ejecución real" \
@@ -57,6 +59,19 @@ assert_pass "repair LOW permitido por política MVP" privilege_check_repair LOW
 assert_pass "repair MEDIUM permitido por política MVP" privilege_check_repair MEDIUM
 assert_fail "repair HIGH bloqueado por política MVP" privilege_check_repair HIGH
 assert_fail "repair CRITICAL bloqueado por política MVP" privilege_check_repair CRITICAL
+
+# SUDO_USER solo es identidad válida si el sistema puede resolver la cuenta.
+# Un valor inválido debe caer al usuario efectivo en vez de contaminar auditoría.
+export SUDO_USER="__meridian_missing_user__"
+expected_user="$(whoami 2>/dev/null || printf '%s\n' unknown)"
+actual_user="$(privilege_get_current_user)"
+if [ "$actual_user" = "$expected_user" ]; then
+  printf 'PASS: SUDO_USER inválido cae al usuario efectivo\n'
+else
+  printf 'FAIL: SUDO_USER inválido no fue rechazado (%s)\n' "$actual_user" >&2
+  failures=$((failures + 1))
+fi
+unset SUDO_USER
 
 if [ "$failures" -ne 0 ]; then
   printf '%s\n' "${failures} fallo(s)" >&2
