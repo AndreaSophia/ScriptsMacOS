@@ -66,15 +66,21 @@ assert_eq "worst severity" "CRITICAL" "$(aggregator_get_worst_severity)"
 # El aggregator representa estado actual: una segunda observación del mismo
 # módulo debe rechazarse y entrar únicamente por reemplazo explícito.
 make_result "one" "WARN" "MEDIUM"
-assert_eq "duplicate canonical result rejected" "1" "$(aggregator_add >/dev/null 2>&1; echo $?)"
+aggregator_add >/dev/null 2>&1
+rc=$?
+assert_eq "duplicate canonical result rejected" "1" "$rc"
 assert_eq "duplicate rejection preserves total" "3" "$(aggregator_count)"
 assert_eq "duplicate rejection preserves PASS" "1" "$(aggregator_count_by_status PASS)"
 assert_eq "duplicate rejection does not add WARN" "1" "$(aggregator_count_by_status WARN)"
 
 # Una validación post-reparación debe sustituir el estado canónico, no duplicarlo.
+# Importante: la operación muta estado global, por lo que NO debe ejecutarse
+# dentro de $(...), ya que command substitution crea un subshell y perdería la mutación.
 make_result "two" "PASS" "INFO"
 RESULT_TITLE="Reparación validada"
-assert_eq "replace existing canonical result" "0" "$(aggregator_replace_current_by_module_id >/dev/null; echo $?)"
+aggregator_replace_current_by_module_id >/dev/null
+rc=$?
+assert_eq "replace existing canonical result" "0" "$rc"
 assert_eq "replace preserves total" "3" "$(aggregator_count)"
 assert_eq "replace updates PASS count" "2" "$(aggregator_count_by_status PASS)"
 assert_eq "replace removes FAIL count" "0" "$(aggregator_count_by_status FAIL)"
@@ -85,7 +91,9 @@ assert_eq "replace updates canonical status" "PASS" "$(_result_field "$replaced"
 # Un module_id inexistente debe fallar sin mutar el aggregator.
 make_result "missing" "PASS" "INFO"
 RESULT_TITLE="Missing"
-assert_eq "replace missing result fails" "1" "$(aggregator_replace_current_by_module_id >/dev/null 2>&1; echo $?)"
+aggregator_replace_current_by_module_id >/dev/null 2>&1
+rc=$?
+assert_eq "replace missing result fails" "1" "$rc"
 assert_eq "failed replace preserves total" "3" "$(aggregator_count)"
 
 # Si por corrupción histórica existen duplicados, lecturas/reemplazos no deben
@@ -95,9 +103,13 @@ add_result "dup" "FAIL" "HIGH"
 first_serialized="$(aggregator_get_all)"
 _AGGREGATOR_RESULTS="${first_serialized}"$'\n'"${first_serialized}"
 _AGGREGATOR_COUNT=2
-assert_eq "ambiguous canonical lookup fails" "1" "$(aggregator_get_by_module_id dup >/dev/null 2>&1; echo $?)"
+aggregator_get_by_module_id dup >/dev/null 2>&1
+rc=$?
+assert_eq "ambiguous canonical lookup fails" "1" "$rc"
 make_result "dup" "PASS" "INFO"
-assert_eq "ambiguous canonical replace fails" "1" "$(aggregator_replace_current_by_module_id >/dev/null 2>&1; echo $?)"
+aggregator_replace_current_by_module_id >/dev/null 2>&1
+rc=$?
+assert_eq "ambiguous canonical replace fails" "1" "$rc"
 assert_eq "ambiguous replace preserves stored total" "2" "$(aggregator_count)"
 
 # Restaurar una sesión sana para verificar consultas no mutantes.
