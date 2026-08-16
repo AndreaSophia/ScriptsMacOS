@@ -163,8 +163,27 @@ log_audit() {
 
 logger_init() {
   local log_path="$1" log_dir
+
+  [ -n "$log_path" ] || return 1
   log_dir="$(dirname "$log_path")"
+
+  # diagnostic.log pertenece a una sesión nueva. Nunca truncamos un objeto que
+  # ya exista ni seguimos un symlink preparado previamente. Esto vuelve explícita
+  # la frontera de ownership del logger y evita convertir una ruta de sesión
+  # reutilizada en una primitiva de clobber privilegiado.
+  if [ -L "$log_dir" ]; then
+    printf "  ${_L_RED}✗${_L_RST}  [logger] Directorio de log rechazado por ser symlink: %s\n" \
+      "$log_dir" >&2
+    return 1
+  fi
+
   mkdir -p "$log_dir" 2>/dev/null || return 1
+
+  if [ -e "$log_path" ] || [ -L "$log_path" ]; then
+    printf "  ${_L_RED}✗${_L_RST}  [logger] Destino de log ya existe o es symlink: %s\n" \
+      "$log_path" >&2
+    return 1
+  fi
 
   MERIDIAN_LOG_FILE="$log_path"
   export MERIDIAN_LOG_FILE
