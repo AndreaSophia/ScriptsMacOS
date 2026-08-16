@@ -56,6 +56,22 @@ _assert_rc 1 "$rc" "engine_init rejects empty output path"
 
 _tmp="${TMPDIR:-/tmp}/meridian_engine_init_test.$$"
 rm -rf "$_tmp"
+mkdir -p "$_tmp"
+
+# A diagnostic session is a new security boundary. Existing directories and
+# symlinks must never be reused, especially when Meridian runs under sudo.
+mkdir "${_tmp}/preexisting"
+if engine_init "${_tmp}/preexisting" >/dev/null 2>&1; then rc=0; else rc=$?; fi
+_assert_rc 1 "$rc" "preexisting session directory is rejected"
+
+ln -s "${_tmp}/nowhere" "${_tmp}/session_link"
+if engine_init "${_tmp}/session_link" >/dev/null 2>&1; then rc=0; else rc=$?; fi
+_assert_rc 1 "$rc" "symlink session path is rejected"
+
+mkdir "${_tmp}/real_parent"
+ln -s "${_tmp}/real_parent" "${_tmp}/parent_link"
+if engine_init "${_tmp}/parent_link/session" >/dev/null 2>&1; then rc=0; else rc=$?; fi
+_assert_rc 1 "$rc" "symlink output parent is rejected"
 
 # Loader failure must propagate and rules must not run.
 _LOADER_RC=1
@@ -82,12 +98,14 @@ if engine_init "${_tmp}/rules" >/dev/null 2>&1; then rc=0; else rc=$?; fi
 _assert_rc 1 "$rc" "rule loader failure propagates"
 _assert_rc 1 "$_RULES_CALLED" "rule loader attempted once"
 
-# Healthy collaborators should initialize successfully.
+# Healthy collaborators should initialize successfully and create a new session
+# directory plus its evidence root exactly once.
 _RULES_RC=0
 _RULES_CALLED=0
 if engine_init "${_tmp}/ok" >/dev/null 2>&1; then rc=0; else rc=$?; fi
 _assert_rc 0 "$rc" "engine_init succeeds with valid collaborators"
 _assert_rc 1 "$_RULES_CALLED" "rule loader attempted on healthy initialization"
+[ -d "${_tmp}/ok/evidencias" ] && _pass "healthy init creates evidence directory" || _fail "healthy init creates evidence directory"
 
 rm -rf "$_tmp"
 printf '\nSummary: %s passed, %s failed\n' "$_PASS" "$_FAIL"
