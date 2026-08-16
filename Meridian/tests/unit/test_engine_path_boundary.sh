@@ -7,6 +7,7 @@ _TMP_ROOT="${TMPDIR:-/tmp}/meridian-engine-path-$$"
 _EVIDENCE_DIR="${_TMP_ROOT}/evidence"
 _HOSTILE_DIR="${_TMP_ROOT}/hostile"
 _MARKER="${_TMP_ROOT}/hostile-invoked"
+_AGG_FILE="${_TMP_ROOT}/aggregated-result"
 
 /bin/mkdir -p "$_EVIDENCE_DIR" "$_HOSTILE_DIR" || exit 1
 trap '/bin/rm -rf "$_TMP_ROOT"' EXIT
@@ -27,9 +28,8 @@ registry_get_field() {
   esac
 }
 
-_AGG_CAPTURE=""
 aggregator_add() {
-  _AGG_CAPTURE="$(result_serialize)" || return 1
+  result_serialize >"$_AGG_FILE" || return 1
   return 0
 }
 rule_engine_evaluate() { return 0; }
@@ -75,6 +75,8 @@ else
   _fail=$((_fail + 1))
 fi
 
+_AGG_CAPTURE=""
+[ -f "$_AGG_FILE" ] && IFS= read -r _AGG_CAPTURE <"$_AGG_FILE"
 if [ -n "$_AGG_CAPTURE" ] && result_deserialize "$_AGG_CAPTURE" >/dev/null 2>&1 && [ "$RESULT_STATUS" = "PASS" ]; then
   printf 'PASS: resultado canónico permanece intacto\n'
 else
