@@ -55,6 +55,7 @@ assert_pass "fixture permite ejercitar módulo requires_root sin sudo" \
 assert_pass "fixture permite módulo no-root" \
   privilege_check_module certificates false
 
+assert_fail "repair NONE no representa una acción ejecutable" privilege_check_repair NONE
 assert_pass "repair LOW permitido por política MVP" privilege_check_repair LOW
 assert_pass "repair MEDIUM permitido por política MVP" privilege_check_repair MEDIUM
 assert_fail "repair HIGH bloqueado por política MVP" privilege_check_repair HIGH
