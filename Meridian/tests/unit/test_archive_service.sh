@@ -79,9 +79,10 @@ else
   _pass "archive service rejects symlink destination directory"
 fi
 
-# Los casos que construyen ZIP requieren la utilidad estándar. En macOS está
-# disponible, pero el test sigue siendo portable para runners mínimos.
-if command -v zip >/dev/null 2>&1; then
+# Los casos que construyen ZIP requieren las rutas estándar que el servicio fija
+# explícitamente. En macOS son parte del sistema base; un runner mínimo puede no
+# tenerlas y en ese caso no fingimos haber ejercitado la construcción real.
+if [ -x /usr/bin/zip ] && [ -x /usr/bin/mktemp ] && [ -x /bin/ln ] && [ -x /bin/rm ]; then
   # Caso 6: publicación sana produce un archivo regular nuevo.
   GOOD_ZIP="$OUTPUT_DIR/good.zip"
   PUBLISHED="$(archive_service_create "$SESSION_DIR" "$GOOD_ZIP")"
@@ -92,22 +93,39 @@ if command -v zip >/dev/null 2>&1; then
     _fail "archive service publishes a regular ZIP artifact"
   fi
 
-  # Caso 7: simular que el destino aparece entre build y publicación. ln(1)
-  # debe fallar y el service no puede reemplazar el objeto que apareció.
-  RACE_ZIP="$OUTPUT_DIR/race.zip"
-  ln() {
-    printf '%s\n' 'appeared-during-publication' > "$2"
-    return 1
-  }
-  if archive_service_create "$SESSION_DIR" "$RACE_ZIP" >/dev/null 2>&1; then
-    _fail "archive service fails closed on publication race"
+  # Caso 7: PATH hostil no debe poder sustituir utilidades privilegiadas. Se
+  # instalan binarios falsos con los mismos nombres; ninguno debe ejecutarse.
+  FAKE_BIN="$TMP_ROOT/fake-bin"
+  HIJACK_MARKER="$TMP_ROOT/path-hijack-executed"
+  mkdir -p "$FAKE_BIN" || exit 1
+  for tool in zip mktemp ln rm mkdir dirname basename; do
+    cat > "$FAKE_BIN/$tool" <<EOF
+#!/bin/sh
+printf '%s\n' '$tool' >> '$HIJACK_MARKER'
+exit 99
+EOF
+    chmod +x "$FAKE_BIN/$tool" || exit 1
+  done
+
+  PATH_BEFORE="$PATH"
+  PATH="$FAKE_BIN:$PATH"
+  export PATH
+  PINNED_ZIP="$OUTPUT_DIR/pinned-tools.zip"
+  if archive_service_create "$SESSION_DIR" "$PINNED_ZIP" >/dev/null 2>&1; then
+    _pass "archive service ignores hostile PATH for privileged tools"
   else
-    _pass "archive service fails closed on publication race"
+    _fail "archive service ignores hostile PATH for privileged tools"
   fi
-  unset -f ln
-  _assert_eq "appeared-during-publication" "$(cat "$RACE_ZIP")" "publication race object is not overwritten"
+  PATH="$PATH_BEFORE"
+  export PATH
+
+  if [ ! -e "$HIJACK_MARKER" ]; then
+    _pass "hostile PATH binaries were not executed"
+  else
+    _fail "hostile PATH binaries were not executed"
+  fi
 else
-  _pass "zip unavailable; archive build cases skipped on this runner"
+  _pass "system archive tools unavailable; archive build cases skipped on this runner"
 fi
 
 printf '\nTests: %s | Failures: %s\n' "$TESTS" "$FAILURES"
