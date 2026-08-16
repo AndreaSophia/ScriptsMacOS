@@ -13,7 +13,23 @@ set -euo pipefail
 # un umask permisivo del shell, Workspace ONE o launchd.
 umask 027
 
-MERIDIAN_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# Resolver el entrypoint físico antes de calcular MERIDIAN_ROOT. Cuando Meridian
+# está instalado, /usr/local/bin/meridian es un symlink al payload real; usar
+# dirname "$0" directamente haría que el runtime buscara VERSION/core bajo
+# /usr/local/bin y terminara silenciosamente bajo set -e/pipefail.
+_MERIDIAN_ENTRY="$0"
+while [ -L "$_MERIDIAN_ENTRY" ]; do
+  _MERIDIAN_LINK="$(/usr/bin/readlink "$_MERIDIAN_ENTRY")" || {
+    printf '%s\n' "[FATAL] No se pudo resolver el symlink de Meridian: $_MERIDIAN_ENTRY" >&2
+    exit 1
+  }
+  case "$_MERIDIAN_LINK" in
+    /*) _MERIDIAN_ENTRY="$_MERIDIAN_LINK" ;;
+    *)  _MERIDIAN_ENTRY="$(cd "$(dirname "$_MERIDIAN_ENTRY")" && pwd)/$_MERIDIAN_LINK" ;;
+  esac
+done
+MERIDIAN_ROOT="$(cd "$(dirname "$_MERIDIAN_ENTRY")" && pwd)"
+unset _MERIDIAN_ENTRY _MERIDIAN_LINK
 export MERIDIAN_ROOT
 
 MERIDIAN_VERSION="$(cat "${MERIDIAN_ROOT}/VERSION" 2>/dev/null | tr -d '[:space:]')"
