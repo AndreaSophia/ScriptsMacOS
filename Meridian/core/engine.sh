@@ -190,9 +190,10 @@ _engine_add_internal_error() {
 }
 
 _engine_run_module() {
-  local module_id="$1" module_name serialized run_rc status_icon
+  local module_id="$1" module_name serialized run_rc status_icon expected_version
   registry_exists "$module_id" || { log_warn "engine" "Módulo no registrado: $module_id"; return 0; }
   module_name="$(registry_get_field "$module_id" 2)"
+  expected_version="$(registry_get_field "$module_id" 4)"
   log_info "engine" "▷ ${module_name} (${module_id})"
 
   local tmp_base="${TMPDIR:-/tmp}" capture
@@ -225,6 +226,19 @@ _engine_run_module() {
     if ! _engine_add_internal_error "$module_id" \
       "DiagnosticResult con framing inválido" \
       "El resultado serializado no cumple el formato canónico v2."; then
+      return 1
+    fi
+    return 0
+  fi
+
+  # La identidad del resultado pertenece al módulo solicitado, no al script que
+  # pueda haber mutado RESULT_* accidentalmente. Un módulo no puede publicar
+  # estado canónico bajo la identidad o versión de otro módulo.
+  if [ "$RESULT_MODULE_ID" != "$module_id" ] || [ "$RESULT_MODULE_VERSION" != "$expected_version" ]; then
+    log_error "engine" "Módulo '${module_id}' intentó publicar identidad/version ajena: ${RESULT_MODULE_ID} v${RESULT_MODULE_VERSION}"
+    if ! _engine_add_internal_error "$module_id" \
+      "DiagnosticResult con identidad inconsistente" \
+      "El módulo produjo ${RESULT_MODULE_ID} v${RESULT_MODULE_VERSION}; se esperaba ${module_id} v${expected_version}."; then
       return 1
     fi
     return 0
