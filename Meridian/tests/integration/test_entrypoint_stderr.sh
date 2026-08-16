@@ -1,6 +1,7 @@
 #!/bin/bash
-# Producto completo: el sandbox debe terminar sin diagnósticos internos de Bash
-# en stderr. Este test reproduce exactamente ./meridian --test --all.
+# Producto completo: el sandbox debe terminar sin ruido interno en stderr.
+# Este test reproduce exactamente ./meridian --test --all y trata cualquier
+# salida por stderr como regresión del runtime/contrato del producto.
 
 set -u
 MERIDIAN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -17,14 +18,14 @@ else
   exit 1
 fi
 
-# No confundimos mensajes funcionales de Meridian con errores del intérprete.
-# La regresión busca síntomas inequívocos de Bash/runtime que nunca deben
-# filtrarse al operador.
-if grep -Eqi 'readonly variable|unbound variable|command not found|bad substitution|syntax error|unexpected EOF|result_model\.sh: line [0-9]+:' "$err_file"; then
-  printf '✗  stderr contiene diagnóstico interno de Bash:\n' >&2
+# En un flujo sandbox exitoso Meridian no debe escribir nada a stderr. Esto
+# bloquea no solo el bug readonly reproducido, sino futuras advertencias de
+# Bash, sources repetidos, variables unset o fallos internos que aún retornen 0.
+if [ -s "$err_file" ]; then
+  printf '✗  stderr no está limpio durante --test --all:\n' >&2
   cat "$err_file" >&2
   exit 1
 fi
 
-printf '✓  stderr no contiene diagnósticos internos de Bash\n'
+printf '✓  stderr completamente limpio en --test --all\n'
 exit 0
