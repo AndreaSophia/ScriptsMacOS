@@ -1,0 +1,16 @@
+id: secure_token
+name: Secure Token & Local Administrators
+description: Inventaría administradores locales y verifica qué cuentas poseen Secure Token.
+category: security
+version: 1.0.0
+author: Apple Platform Team
+criticality: high
+requires_root: false
+timeout_seconds: 20
+repairable: false
+tags:
+  - security
+  - identity
+  - secure_token
+  - filevault
+  - compliance
