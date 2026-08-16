@@ -10,6 +10,19 @@
 REPORTING_TXT_PATH=""
 REPORTING_JSON_PATH=""
 
+# Herramientas de filesystem usadas en una frontera que puede correr como root.
+# No se resuelven mediante PATH: reporting no debe permitir que el entorno elija
+# qué binario crea directorios durante una sesión privilegiada.
+_REPORTING_MKDIR="/bin/mkdir"
+
+_reporting_require_system_tools() {
+  [ -x "$_REPORTING_MKDIR" ] || {
+    log_error "reporting_service" "Herramienta requerida no disponible: $_REPORTING_MKDIR"
+    return 1
+  }
+  return 0
+}
+
 # =============================================================================
 # _reporting_validate_output_path <output_dir> <path>
 # Un renderer solo puede publicar un artefacto regular creado dentro del
@@ -19,14 +32,24 @@ REPORTING_JSON_PATH=""
 _reporting_validate_output_path() {
   local output_dir="${1:-}"
   local candidate="${2:-}"
-  local output_real candidate_parent_real
+  local output_real candidate_parent candidate_parent_real
 
   [ -n "$output_dir" ] && [ -n "$candidate" ] || return 1
+  [ -d "$output_dir" ] || return 1
+  [ ! -L "$output_dir" ] || return 1
   [ -f "$candidate" ] || return 1
   [ ! -L "$candidate" ] || return 1
 
+  # Evitamos dirname(1) para que la validación de una ruta publicada no dependa
+  # de PATH. El renderer debe devolver una ruta con componente de directorio.
+  case "$candidate" in
+    */*) candidate_parent="${candidate%/*}" ;;
+    *) return 1 ;;
+  esac
+  [ -n "$candidate_parent" ] || candidate_parent="/"
+
   output_real="$(cd "$output_dir" 2>/dev/null && pwd -P)" || return 1
-  candidate_parent_real="$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P)" || return 1
+  candidate_parent_real="$(cd "$candidate_parent" 2>/dev/null && pwd -P)" || return 1
 
   [ "$candidate_parent_real" = "$output_real" ]
 }
@@ -54,11 +77,20 @@ reporting_service_generate() {
     return 1
   fi
 
+  if ! _reporting_require_system_tools; then
+    return 1
+  fi
+
   if [ ${#formats[@]} -eq 0 ]; then
     formats=("txt" "json")
   fi
 
-  [ -d "$output_dir" ] || mkdir -p "$output_dir" 2>/dev/null || {
+  if [ -L "$output_dir" ]; then
+    log_error "reporting_service" "Directorio de reportes no puede ser symlink: $output_dir"
+    return 1
+  fi
+
+  [ -d "$output_dir" ] || "$_REPORTING_MKDIR" -p "$output_dir" 2>/dev/null || {
     log_error "reporting_service" "No se pudo crear directorio de reportes: $output_dir"
     return 1
   }
