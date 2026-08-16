@@ -23,6 +23,10 @@ readonly PKG_INSTALL_LOCATION="/usr/local/lib/meridian"
 readonly PKG_COMMAND_PATH="/usr/local/bin/meridian"
 readonly PKG_OUTPUT="${PKG_NAME}-${MERIDIAN_VERSION}.pkg"
 readonly PAYLOAD_MANIFEST_NAME=".meridian-payload-manifest"
+# Meridian contiene shell scripts y datos, no binarios Mach-O. Declaramos ambas
+# arquitecturas macOS soportadas para impedir que Installer infiera un producto
+# x86_64-only y solicite Rosetta innecesariamente en Apple Silicon.
+readonly PKG_HOST_ARCHITECTURES="arm64,x86_64"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -176,9 +180,6 @@ if [ ! -f "$MANIFEST_PATH" ]; then
   exit 1
 fi
 
-# Obtener primero una instantánea verificable del árbol instalado. No usamos
-# `find | while` porque, sin pipefail, un fallo de find podría quedar oculto por
-# el estado exitoso del while y dejar residuos de una versión anterior.
 CURRENT_LIST="$(mktemp /tmp/meridian-installed.XXXXXX)" || {
   echo "[Meridian] no se pudo crear archivo temporal para verificar upgrade" >&2
   exit 1
@@ -188,9 +189,6 @@ if ! find "$INSTALL_ROOT" \( -type f -o -type l \) -print > "$CURRENT_LIST"; the
   exit 1
 fi
 
-# Retirar únicamente archivos residuales no pertenecientes al payload recién
-# instalado. La instalación nueva ya existe en este punto, por lo que un fallo
-# anterior de Installer no destruye preventivamente la versión funcional.
 while IFS= read -r path; do
   [ "$path" = "$MANIFEST_PATH" ] && continue
   rel="${path#${INSTALL_ROOT}/}"
@@ -202,7 +200,6 @@ while IFS= read -r path; do
   fi
 done < "$CURRENT_LIST"
 
-# Retirar directorios que hayan quedado vacíos, de abajo hacia arriba.
 find "$INSTALL_ROOT" -depth -type d ! -path "$INSTALL_ROOT" -exec rmdir {} \; 2>/dev/null || true
 
 mkdir -p "/usr/local/bin" || exit 1
@@ -213,14 +210,11 @@ fi
 rm -f "$COMMAND_PATH" || exit 1
 ln -s "${INSTALL_ROOT}/meridian" "$COMMAND_PATH" || exit 1
 
-# La instalación debe quedar administrable pero no modificable por usuarios
-# estándar. El entrypoint es el único archivo que necesita bit ejecutable.
 chown -R root:wheel "$INSTALL_ROOT" 2>/dev/null || true
 find "$INSTALL_ROOT" -type d -exec chmod 755 {} \;
 find "$INSTALL_ROOT" -type f -exec chmod 644 {} \;
 chmod 755 "${INSTALL_ROOT}/meridian" || exit 1
 
-# Directorio corporativo del audit log, restringido a root y administradores.
 mkdir -p "/Library/Logs/Meridian" || exit 1
 chown root:admin "/Library/Logs/Meridian" 2>/dev/null || true
 chmod 750 "/Library/Logs/Meridian" || exit 1
@@ -254,7 +248,7 @@ _build_product_pkg() {
     <title>Meridian ${MERIDIAN_VERSION}</title>
     <organization>com.itau.apple</organization>
     <domains enable_localSystem="true"/>
-    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true" hostArchitectures="${PKG_HOST_ARCHITECTURES}"/>
     <pkg-ref id="${PKG_IDENTIFIER}"/>
     <choices-outline>
         <line choice="${PKG_IDENTIFIER}"/>
@@ -265,6 +259,13 @@ _build_product_pkg() {
     <pkg-ref id="${PKG_IDENTIFIER}" version="${PKG_VERSION}" onConclusion="none">${PKG_NAME}-component.pkg</pkg-ref>
 </installer-gui-script>
 XML
+
+  # Fail closed: no producir un paquete si la Distribution pierde por accidente
+  # la declaración universal que evita requerir Rosetta en Apple Silicon.
+  grep -Fq "hostArchitectures=\"${PKG_HOST_ARCHITECTURES}\"" "$dist_xml" || {
+    echo "[ERROR] Distribution.xml no declara las arquitecturas esperadas: ${PKG_HOST_ARCHITECTURES}" >&2
+    exit 1
+  }
 
   local output_pkg="${SCRIPT_DIR}/${PKG_OUTPUT}"
   rm -f "$output_pkg"
@@ -309,6 +310,7 @@ _verify_pkg() {
   echo ""
   echo "  Meridian version : ${MERIDIAN_VERSION}"
   echo "  Package version  : ${PKG_VERSION}"
+  echo "  Architectures    : ${PKG_HOST_ARCHITECTURES}"
   echo "  Install location : ${PKG_INSTALL_LOCATION}"
   echo "  Command          : ${PKG_COMMAND_PATH}"
   echo "  Ejecutar         : sudo meridian"
