@@ -45,6 +45,7 @@ _load_core() {
     "reporting/renderer_txt.sh"
     "reporting/renderer_json.sh"
     "services/reporting_service.sh"
+    "services/archive_service.sh"
     "ui/tui/menu.sh"
     "ui/tui/result_display.sh"
     "ui/tui/confirm_dialog.sh"
@@ -349,25 +350,23 @@ main() {
     txt_path="$(reporting_service_get_txt_path)"
     json_path="$(reporting_service_get_json_path)"
 
-    local zip_name output_base
+    local zip_name output_base archive_path
     zip_name="Meridian_$(hostname -s 2>/dev/null || echo unknown)_$(date '+%Y%m%d_%H%M%S').zip"
     output_base="$(_get_output_base)"
     zip_path="${output_base}/${zip_name}"
-    _SESSION_ZIP_PATH="$zip_path"
 
-    if command -v zip >/dev/null 2>&1; then
-      mkdir -p "$output_base" 2>/dev/null || true
-      if ! ( cd "$(dirname "$output_dir")" && \
-        zip -r "$zip_path" "$(basename "$output_dir")" >/dev/null 2>&1 ); then
-        log_warn "meridian" "No se pudo crear ZIP: $zip_path"
-      fi
+    if archive_path="$(archive_service_create "$output_dir" "$zip_path")"; then
+      zip_path="$archive_path"
+      _SESSION_ZIP_PATH="$zip_path"
     else
-      log_warn "meridian" "Comando zip no disponible; se omite empaquetado"
+      zip_path=""
+      _SESSION_ZIP_PATH=""
+      log_warn "meridian" "No se pudo crear un ZIP nuevo y seguro para la sesión"
     fi
 
     tui_display_output_paths "$output_dir" "$txt_path" "$json_path"
 
-    if [ -f "$zip_path" ]; then
+    if [ -n "$zip_path" ] && [ -f "$zip_path" ] && [ ! -L "$zip_path" ]; then
       printf "  \033[1;32mZIP listo   : %s\033[0m\n\n" "$zip_path"
     fi
   fi
