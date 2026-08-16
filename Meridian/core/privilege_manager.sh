@@ -12,13 +12,17 @@ privilege_check_root() {
   return 1
 }
 
+# Las funciones del core no terminan el proceso por su cuenta. Esta frontera
+# informa el requisito y devuelve error; el entrypoint/caller decide si aborta,
+# preservando la misma separación que engine_init y los services.
 privilege_require_root() {
   if ! privilege_check_root; then
-    printf "\n"
-    printf "  \033[0;31m[✗]\033[0m  Meridian requiere privilegios de administrador.\n"
-    printf "        Ejecuta: \033[1msudo meridian\033[0m\n\n"
-    exit 1
+    printf '\n' >&2
+    printf '  [✗]  Meridian requiere privilegios de administrador.\n' >&2
+    printf '       Ejecuta: sudo meridian\n\n' >&2
+    return 1
   fi
+  return 0
 }
 
 privilege_check_module() {
@@ -72,9 +76,10 @@ privilege_check_repair() {
 }
 
 privilege_get_current_user() {
-  if [ -n "${SUDO_USER:-}" ]; then
-    echo "$SUDO_USER"
-  else
-    whoami 2>/dev/null || echo "unknown"
+  if [ -n "${SUDO_USER:-}" ] && id -u "$SUDO_USER" >/dev/null 2>&1; then
+    printf '%s\n' "$SUDO_USER"
+    return 0
   fi
+
+  whoami 2>/dev/null || printf '%s\n' "unknown"
 }
