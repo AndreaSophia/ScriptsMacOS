@@ -4,7 +4,10 @@
 # API centralizada de logging.
 # =============================================================================
 
-if [ -t 1 ]; then
+# Toda la presentación del logger se emite por stderr. La decisión de usar
+# colores debe seguir ese mismo canal para no inyectar ANSI cuando stdout sea
+# interactivo pero stderr esté redirigido (o viceversa).
+if [ -t 2 ]; then
   _L_RST='\033[0m'; _L_BOLD='\033[1m'; _L_CYAN='\033[0;36m'; _L_BCYAN='\033[1;36m'
   _L_GREEN='\033[0;32m'; _L_BGREEN='\033[1;32m'; _L_YELLOW='\033[0;33m'; _L_RED='\033[0;31m'
   _L_GRAY='\033[0;90m'; _L_WHITE='\033[1;37m'; _L_MAGENTA='\033[0;35m'
@@ -68,6 +71,20 @@ _default_audit_log() {
   fi
 }
 
+# Producción privilegiada siempre escribe en la ubicación corporativa fija.
+# Un environment override controlado por el caller no debe convertir el logger
+# en una primitiva de append/chmod arbitraria ejecutándose como root. El override
+# se conserva para ejecución no privilegiada y para el sandbox de fixtures.
+_resolve_audit_log() {
+  local euid
+  euid="${EUID:-$(id -u 2>/dev/null || echo 1)}"
+  if [ "$euid" -eq 0 ] && [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
+    printf '%s\n' '/Library/Logs/Meridian/audit.log'
+  else
+    printf '%s\n' "${MERIDIAN_AUDIT_LOG:-$(_default_audit_log)}"
+  fi
+}
+
 # Audit es un formato de un registro por línea separado por '|'. Codificamos
 # contenido antes de escribirlo para que valores controlados por módulos no
 # puedan inyectar columnas ni registros adicionales. El orden importa: primero
@@ -82,12 +99,13 @@ _audit_encode() {
 }
 
 log_audit() {
-  local component="$1" action="$2" detail="$3" ts operator hostname audit_log audit_dir
+  local component="$1" action="$2" detail="$3" ts operator hostname audit_log audit_dir euid
   local operator_safe hostname_safe component_safe action_safe detail_safe
   ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   operator="${SUDO_USER:-$(whoami 2>/dev/null || echo 'unknown')}"
   hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
-  audit_log="${MERIDIAN_AUDIT_LOG:-$(_default_audit_log)}"
+  euid="${EUID:-$(id -u 2>/dev/null || echo 1)}"
+  audit_log="$(_resolve_audit_log)" || return 1
   audit_dir="$(dirname "$audit_log")"
 
   mkdir -p "$audit_dir" 2>/dev/null || {
@@ -95,9 +113,23 @@ log_audit() {
     return 1
   }
 
-  if [ "${EUID:-$(id -u 2>/dev/null || echo 1)}" -eq 0 ] && \
-     [ "$audit_dir" = "/Library/Logs/Meridian" ]; then
-    chmod 750 "$audit_dir" 2>/dev/null || true
+  # Nunca seguir symlinks en el destino de auditoría. Incluso en modo no-root,
+  # un symlink convertiría el append y chmod posteriores en operaciones sobre
+  # un objeto distinto del que Meridian cree estar auditando.
+  if [ -L "$audit_log" ]; then
+    _log_write "ERROR" "logger" "Destino de audit log rechazado por ser symlink: $audit_log"
+    return 1
+  fi
+
+  if [ "$euid" -eq 0 ] && [ "$audit_dir" = "/Library/Logs/Meridian" ]; then
+    chown root:admin "$audit_dir" 2>/dev/null || {
+      _log_write "ERROR" "logger" "No se pudo asegurar ownership del directorio de auditoría: $audit_dir"
+      return 1
+    }
+    chmod 750 "$audit_dir" 2>/dev/null || {
+      _log_write "ERROR" "logger" "No se pudo asegurar permisos del directorio de auditoría: $audit_dir"
+      return 1
+    }
   fi
 
   operator_safe="$(_audit_encode "$operator")"
@@ -113,8 +145,15 @@ log_audit() {
       return 1
     }
 
-  if [ "${EUID:-$(id -u 2>/dev/null || echo 1)}" -eq 0 ]; then
-    chmod 640 "$audit_log" 2>/dev/null || true
+  if [ "$euid" -eq 0 ] && [ "$audit_log" = "/Library/Logs/Meridian/audit.log" ]; then
+    chown root:admin "$audit_log" 2>/dev/null || {
+      _log_write "ERROR" "logger" "No se pudo asegurar ownership del audit log: $audit_log"
+      return 1
+    }
+    chmod 640 "$audit_log" 2>/dev/null || {
+      _log_write "ERROR" "logger" "No se pudo asegurar permisos del audit log: $audit_log"
+      return 1
+    }
   fi
 
   _log_write "AUDIT" "$component" "${action}: ${detail}"
