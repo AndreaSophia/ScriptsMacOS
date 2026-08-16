@@ -2,7 +2,8 @@
 # =============================================================================
 # Meridian — core/module_registry.sh
 # Registro en memoria de módulos cargados.
-# Compatible con Bash 3.2/macOS sin depender de escapes GNU en sed/awk.
+# Compatible con Bash 3.2/macOS; el framing se interpreta con builtins del shell
+# para no depender de utilidades resueltas mediante PATH en el core.
 # =============================================================================
 
 _REGISTRY=""
@@ -43,36 +44,66 @@ registry_add() {
   return 0
 }
 
+# Extrae un campo lógico (1..9) de una línea del registry usando únicamente
+# parameter expansion de Bash 3.2. El core puede correr privilegiado y no debe
+# resolver `cut` (ni ninguna otra utilidad de parsing) desde un PATH heredado.
+_registry_field_from_line() {
+  local line="$1" target="$2" current=1 value
+
+  case "$target" in
+    1|2|3|4|5|6|7|8|9) ;;
+    *) return 1 ;;
+  esac
+
+  value="$line"
+  while [ "$current" -lt "$target" ]; do
+    case "$value" in
+      *'|||'*) value="${value#*|||}" ;;
+      *) return 1 ;;
+    esac
+    current=$((current + 1))
+  done
+
+  if [ "$target" -lt 9 ]; then
+    case "$value" in
+      *'|||'*) printf '%s\n' "${value%%|||*}" ;;
+      *) return 1 ;;
+    esac
+  else
+    # El noveno campo es el resto de la línea y puede estar vacío.
+    case "$value" in
+      *'|||'*) return 1 ;;
+      *) printf '%s\n' "$value" ;;
+    esac
+  fi
+}
+
 registry_exists() {
-  local id="$1" line
+  local id="$1" line current_id
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    [ "$(printf '%s\n' "$line" | cut -d'|' -f1)" = "$id" ] && return 0
+    current_id="$(_registry_field_from_line "$line" 1)" || return 1
+    [ "$current_id" = "$id" ] && return 0
   done <<EOF
 $_REGISTRY
 EOF
   return 1
 }
 
-# Como el separador lógico es |||, cut con '|' deja dos campos vacíos entre
-# valores. Los campos lógicos 1..9 están en posiciones 1,4,7,...,25.
-_registry_cut_position() {
-  case "$1" in
-    1) echo 1;; 2) echo 4;; 3) echo 7;; 4) echo 10;;
-    5) echo 13;; 6) echo 16;; 7) echo 19;; 8) echo 22;; 9) echo 25;;
-    *) return 1;;
-  esac
-}
-
 registry_get_field() {
-  local id="$1" field="$2" pos line
-  pos="$(_registry_cut_position "$field")" || return 1
+  local id="$1" field="$2" line current_id
+
+  case "$field" in
+    1|2|3|4|5|6|7|8|9) ;;
+    *) return 1 ;;
+  esac
 
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    if [ "$(printf '%s\n' "$line" | cut -d'|' -f1)" = "$id" ]; then
-      printf '%s\n' "$line" | cut -d'|' -f"$pos"
-      return 0
+    current_id="$(_registry_field_from_line "$line" 1)" || return 1
+    if [ "$current_id" = "$id" ]; then
+      _registry_field_from_line "$line" "$field"
+      return $?
     fi
   done <<EOF
 $_REGISTRY
@@ -89,10 +120,11 @@ registry_get_dependencies() {
 }
 
 registry_get_all_ids() {
-  local line
+  local line id
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    printf '%s\n' "$line" | cut -d'|' -f1
+    id="$(_registry_field_from_line "$line" 1)" || return 1
+    printf '%s\n' "$id"
   done <<EOF
 $_REGISTRY
 EOF
@@ -102,8 +134,8 @@ registry_get_by_category() {
   local category="$1" line id current_category
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    id="$(printf '%s\n' "$line" | cut -d'|' -f1)"
-    current_category="$(printf '%s\n' "$line" | cut -d'|' -f7)"
+    id="$(_registry_field_from_line "$line" 1)" || return 1
+    current_category="$(_registry_field_from_line "$line" 3)" || return 1
     [ "$current_category" = "$category" ] && printf '%s\n' "$id"
   done <<EOF
 $_REGISTRY
@@ -126,10 +158,10 @@ registry_print() {
 
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    id="$(printf '%s\n' "$line" | cut -d'|' -f1)"
-    category="$(printf '%s\n' "$line" | cut -d'|' -f7)"
-    version="$(printf '%s\n' "$line" | cut -d'|' -f10)"
-    criticality="$(printf '%s\n' "$line" | cut -d'|' -f13)"
+    id="$(_registry_field_from_line "$line" 1)" || return 1
+    category="$(_registry_field_from_line "$line" 3)" || return 1
+    version="$(_registry_field_from_line "$line" 4)" || return 1
+    criticality="$(_registry_field_from_line "$line" 5)" || return 1
     printf "  %-30s %-12s %-10s %-10s\n" "$id" "$category" "$version" "$criticality"
   done <<EOF
 $_REGISTRY
