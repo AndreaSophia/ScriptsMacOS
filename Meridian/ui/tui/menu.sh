@@ -28,6 +28,13 @@ tui_banner() {
   printf "  \033[0;90m  %s\033[0m\n" "${MERIDIAN_ORG:-Apple Platform Team}"
   printf "  \033[0;90m  v%s\033[0m\n" "${MERIDIAN_VERSION:-1.0.0-mvp}"
   printf "  \033[1;36m══════════════════════════════════════════════════\033[0m\n"
+
+  if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ]; then
+    printf "\n"
+    printf "  \033[1;33m🧪 MODO TEST / FIXTURES SIMULADOS\033[0m\n"
+    printf "  \033[0;33mLos resultados NO representan el estado real de este Mac.\033[0m\n"
+  fi
+
   printf "\n"
 }
 
