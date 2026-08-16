@@ -64,7 +64,7 @@ assert_fail "repair CRITICAL bloqueado por política MVP" privilege_check_repair
 # SUDO_USER solo es identidad válida si el sistema puede resolver la cuenta.
 # Un valor inválido debe caer al usuario efectivo en vez de contaminar auditoría.
 export SUDO_USER="__meridian_missing_user__"
-expected_user="$(whoami 2>/dev/null || printf '%s\n' unknown)"
+expected_user="$(/usr/bin/whoami 2>/dev/null || printf '%s\n' unknown)"
 actual_user="$(privilege_get_current_user)"
 if [ "$actual_user" = "$expected_user" ]; then
   printf 'PASS: SUDO_USER inválido cae al usuario efectivo\n'
@@ -73,6 +73,56 @@ else
   failures=$((failures + 1))
 fi
 unset SUDO_USER
+
+# Regresión: privilege_manager puede ejecutarse dentro de Meridian como root.
+# Un PATH heredado/hostil no debe permitir sustituir id(1) o whoami(1). Los
+# ejecutables falsos dejan un marker si llegan a ejecutarse.
+if [ -x /usr/bin/mktemp ] && [ -x /bin/mkdir ] && [ -x /bin/chmod ] && \
+   [ -x /bin/rm ] && [ -x /usr/bin/whoami ]; then
+  tmp_root="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/meridian_privilege_path.XXXXXX")"
+  fake_bin="${tmp_root}/fake-bin"
+  marker="${tmp_root}/path-hijack-executed"
+  /bin/mkdir -p "$fake_bin"
+
+  for tool in id whoami; do
+    /bin/cat > "${fake_bin}/${tool}" <<EOF
+#!/bin/sh
+printf '%s\n' '${tool}' >> '${marker}'
+exit 0
+EOF
+    /bin/chmod +x "${fake_bin}/${tool}"
+  done
+
+  path_before="$PATH"
+  PATH="${fake_bin}:${PATH}"
+  export PATH
+  export SUDO_USER="__meridian_missing_user__"
+
+  expected_user="$(/usr/bin/whoami 2>/dev/null || printf '%s\n' unknown)"
+  actual_user="$(privilege_get_current_user)"
+
+  PATH="$path_before"
+  export PATH
+  unset SUDO_USER
+
+  if [ "$actual_user" = "$expected_user" ]; then
+    printf 'PASS: privilege_get_current_user ignora PATH hostil\n'
+  else
+    printf 'FAIL: privilege_get_current_user cambió identidad bajo PATH hostil (%s)\n' "$actual_user" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [ ! -e "$marker" ]; then
+    printf 'PASS: binarios id/whoami falsos no fueron ejecutados\n'
+  else
+    printf 'FAIL: privilege_manager ejecutó utilidad de identidad desde PATH\n' >&2
+    failures=$((failures + 1))
+  fi
+
+  /bin/rm -rf "$tmp_root"
+else
+  printf 'PASS: utilidades estándar no disponibles; caso PATH hostil omitido\n'
+fi
 
 if [ "$failures" -ne 0 ]; then
   printf '%s\n' "${failures} fallo(s)" >&2
