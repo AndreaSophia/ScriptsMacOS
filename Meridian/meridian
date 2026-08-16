@@ -153,6 +153,7 @@ COMPORTAMIENTO SIN SELECTOR:
 
 MÓDULOS DISPONIBLES:
   filevault        FileVault Disk Encryption
+  secure_token     Secure Token & Local Administrators
   certificates     Certificates & Trust Store
   crowdstrike      CrowdStrike Falcon EDR
   cisco_umbrella   Cisco Umbrella DNS Security
@@ -162,6 +163,7 @@ MÓDULOS DISPONIBLES:
 EJEMPLOS:
   sudo meridian
   sudo meridian --all
+  sudo meridian --module secure_token --no-report
   sudo meridian --module crowdstrike
   sudo meridian --module filevault --module certificates
   sudo meridian --category security
