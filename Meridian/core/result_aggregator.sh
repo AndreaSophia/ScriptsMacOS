@@ -1,9 +1,25 @@
 #!/bin/bash
 # Meridian — core/result_aggregator.sh
 # Acumula DiagnosticResult v2 sin mutar el resultado global durante lecturas.
+# Invariante: existe como máximo un resultado canónico por module_id.
 
 _AGGREGATOR_RESULTS=""
 _AGGREGATOR_COUNT=0
+
+# _aggregator_contains_module_id <module_id>
+# Comprueba identidad sin deserializar ni mutar RESULT_* del caller.
+_aggregator_contains_module_id() {
+  local target="${1:-}" line id
+  [ -n "$target" ] || return 1
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    id="$(_aggregator_field "$line" 1)"
+    [ "$id" = "$target" ] && return 0
+  done < <(aggregator_get_all)
+
+  return 1
+}
 
 aggregator_add() {
   if ! result_validate; then
@@ -11,8 +27,16 @@ aggregator_add() {
     return 1
   fi
 
+  # El aggregator representa estado actual, no historial. Una segunda
+  # observación del mismo módulo debe entrar únicamente por la operación
+  # explícita de reemplazo post-validación.
+  if _aggregator_contains_module_id "$RESULT_MODULE_ID"; then
+    log_error "aggregator" "Resultado canónico duplicado rechazado: ${RESULT_MODULE_ID}"
+    return 1
+  fi
+
   local serialized
-  serialized="$(result_serialize)"
+  serialized="$(result_serialize)" || return 1
   if [ -n "$_AGGREGATOR_RESULTS" ]; then
     _AGGREGATOR_RESULTS="${_AGGREGATOR_RESULTS}"$'\n'"${serialized}"
   else
@@ -40,8 +64,10 @@ aggregator_replace_current_by_module_id() {
     [ -z "$line" ] && continue
     id="$(_aggregator_field "$line" 1)"
     if [ "$id" = "$target" ]; then
+      # Si por corrupción previa existiera más de una copia, no ocultar la
+      # anomalía promoviendo silenciosamente múltiples registros.
+      replaced=$((replaced + 1))
       line="$replacement"
-      replaced=1
     fi
     if [ -n "$rebuilt" ]; then
       rebuilt="${rebuilt}"$'\n'"${line}"
@@ -51,7 +77,7 @@ aggregator_replace_current_by_module_id() {
   done < <(aggregator_get_all)
 
   if [ "$replaced" -ne 1 ]; then
-    log_error "aggregator" "No existe resultado canónico para reemplazar: ${target}"
+    log_error "aggregator" "Se esperaba exactamente un resultado canónico para ${target}; encontrados: ${replaced}"
     return 1
   fi
 
@@ -76,18 +102,21 @@ _aggregator_field() {
 }
 
 # aggregator_get_by_module_id <module_id>
-# Devuelve el último DiagnosticResult del módulo sin mutar RESULT_*.
-# El último resultado es el canónico si una sesión llega a registrar más de
-# una observación del mismo módulo.
+# Devuelve el único DiagnosticResult canónico del módulo sin mutar RESULT_*.
 aggregator_get_by_module_id() {
-  local target="$1" line id match=""
+  local target="${1:-}" line id match="" matches=0
+  [ -n "$target" ] || return 1
+
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     id="$(_aggregator_field "$line" 1)"
-    [ "$id" = "$target" ] && match="$line"
+    if [ "$id" = "$target" ]; then
+      match="$line"
+      matches=$((matches + 1))
+    fi
   done < <(aggregator_get_all)
 
-  [ -n "$match" ] || return 1
+  [ "$matches" -eq 1 ] || return 1
   printf '%s\n' "$match"
 }
 
