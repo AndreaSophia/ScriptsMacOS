@@ -5,8 +5,34 @@
 # Principio: mínimo privilegio — cada módulo declara lo que necesita.
 # =============================================================================
 
+# Esta capa se ejecuta también dentro de procesos privilegiados. No resolvemos
+# utilidades de identidad desde PATH: un entorno heredado de sudo/MDM no debe
+# poder sustituir id(1) o whoami(1) por ejecutables controlados por otro usuario.
+_PRIVILEGE_ID_BIN="/usr/bin/id"
+_PRIVILEGE_WHOAMI_BIN="/usr/bin/whoami"
+
+_privilege_require_identity_tools() {
+  if [ ! -x "$_PRIVILEGE_ID_BIN" ]; then
+    printf '[privilege_manager] utilidad del sistema no disponible: %s\n' "$_PRIVILEGE_ID_BIN" >&2
+    return 1
+  fi
+  if [ ! -x "$_PRIVILEGE_WHOAMI_BIN" ]; then
+    printf '[privilege_manager] utilidad del sistema no disponible: %s\n' "$_PRIVILEGE_WHOAMI_BIN" >&2
+    return 1
+  fi
+  return 0
+}
+
 privilege_check_root() {
-  if [ "${EUID:-$(id -u 2>/dev/null)}" -eq 0 ]; then
+  # Bash define EUID normalmente; el fallback mantiene la función usable en
+  # shells de test, pero nunca ejecuta id(1) desde PATH.
+  if [ -n "${EUID+x}" ]; then
+    [ "$EUID" -eq 0 ] 2>/dev/null
+    return $?
+  fi
+
+  [ -x "$_PRIVILEGE_ID_BIN" ] || return 1
+  if [ "$("$_PRIVILEGE_ID_BIN" -u 2>/dev/null)" = "0" ]; then
     return 0
   fi
   return 1
@@ -83,10 +109,18 @@ privilege_check_repair() {
 }
 
 privilege_get_current_user() {
-  if [ -n "${SUDO_USER:-}" ] && id -u "$SUDO_USER" >/dev/null 2>&1; then
+  if ! _privilege_require_identity_tools; then
+    printf '%s\n' "unknown"
+    return 1
+  fi
+
+  if [ -n "${SUDO_USER:-}" ] && "$_PRIVILEGE_ID_BIN" -u "$SUDO_USER" >/dev/null 2>&1; then
     printf '%s\n' "$SUDO_USER"
     return 0
   fi
 
-  whoami 2>/dev/null || printf '%s\n' "unknown"
+  "$_PRIVILEGE_WHOAMI_BIN" 2>/dev/null || {
+    printf '%s\n' "unknown"
+    return 1
+  }
 }
