@@ -11,6 +11,27 @@ REPORTING_TXT_PATH=""
 REPORTING_JSON_PATH=""
 
 # =============================================================================
+# _reporting_validate_output_path <output_dir> <path>
+# Un renderer solo puede publicar un artefacto regular creado dentro del
+# directorio de reportes de la sesión. Rechazamos rutas inexistentes, symlinks y
+# paths externos para que rc=0 no se convierta en una afirmación falsa de éxito.
+# =============================================================================
+_reporting_validate_output_path() {
+  local output_dir="${1:-}"
+  local candidate="${2:-}"
+  local output_real candidate_parent_real
+
+  [ -n "$output_dir" ] && [ -n "$candidate" ] || return 1
+  [ -f "$candidate" ] || return 1
+  [ ! -L "$candidate" ] || return 1
+
+  output_real="$(cd "$output_dir" 2>/dev/null && pwd -P)" || return 1
+  candidate_parent_real="$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P)" || return 1
+
+  [ "$candidate_parent_real" = "$output_real" ]
+}
+
+# =============================================================================
 # reporting_service_generate <output_dir> <format...>
 # Genera los reportes solicitados. Formatos MVP: txt json
 # Un renderer fallido no impide intentar los demás; al final se retorna error
@@ -73,10 +94,10 @@ reporting_service_generate() {
     case "$fmt" in
       txt)
         if generated_path="$(renderer_txt_generate "$output_dir" "$results" "$summary")"; then
-          if [ -n "$generated_path" ]; then
+          if _reporting_validate_output_path "$output_dir" "$generated_path"; then
             REPORTING_TXT_PATH="$generated_path"
           else
-            log_error "reporting_service" "Renderer TXT retornó éxito sin ruta de salida"
+            log_error "reporting_service" "Renderer TXT retornó éxito sin un artefacto válido dentro del directorio de sesión"
             failures=$((failures + 1))
           fi
         else
@@ -86,10 +107,10 @@ reporting_service_generate() {
         ;;
       json)
         if generated_path="$(renderer_json_generate "$output_dir" "$results" "$summary")"; then
-          if [ -n "$generated_path" ]; then
+          if _reporting_validate_output_path "$output_dir" "$generated_path"; then
             REPORTING_JSON_PATH="$generated_path"
           else
-            log_error "reporting_service" "Renderer JSON retornó éxito sin ruta de salida"
+            log_error "reporting_service" "Renderer JSON retornó éxito sin un artefacto válido dentro del directorio de sesión"
             failures=$((failures + 1))
           fi
         else
