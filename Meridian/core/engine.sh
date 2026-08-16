@@ -1,12 +1,43 @@
 #!/bin/bash
 # Meridian — core/engine.sh
 
+# El engine puede ejecutarse como root desde sudo, launchd o MDM. Las utilidades
+# usadas para crear sesiones y procesar la frontera de stdout de los módulos no
+# se resuelven mediante PATH heredado.
+_ENGINE_DIRNAME="/usr/bin/dirname"
+_ENGINE_MKDIR="/bin/mkdir"
+_ENGINE_MKTEMP="/usr/bin/mktemp"
+_ENGINE_TAIL="/usr/bin/tail"
+_ENGINE_WC="/usr/bin/wc"
+_ENGINE_TR="/usr/bin/tr"
+_ENGINE_SED="/usr/bin/sed"
+_ENGINE_RM="/bin/rm"
+
 # Estado efímero del resolvedor de dependencias. Se reinicia en cada engine_run.
 # Se usan strings delimitados en vez de associative arrays para conservar
 # compatibilidad con Bash 3.2 incluido en macOS.
 _ENGINE_DEP_RESOLVED=""
 _ENGINE_DEP_VISITING=""
 _ENGINE_DEP_ORDER=""
+
+_engine_require_system_tools() {
+  local tool
+  for tool in \
+    "$_ENGINE_DIRNAME" \
+    "$_ENGINE_MKDIR" \
+    "$_ENGINE_MKTEMP" \
+    "$_ENGINE_TAIL" \
+    "$_ENGINE_WC" \
+    "$_ENGINE_TR" \
+    "$_ENGINE_SED" \
+    "$_ENGINE_RM"; do
+    if [ ! -x "$tool" ]; then
+      printf '%s\n' "[FATAL] Utilidad de sistema requerida no disponible: $tool" >&2
+      return 1
+    fi
+  done
+  return 0
+}
 
 engine_init() {
   local output_dir="$1" output_parent
@@ -16,18 +47,22 @@ engine_init() {
     return 1
   fi
 
+  if ! _engine_require_system_tools; then
+    return 1
+  fi
+
   # La sesión debe nacer como un directorio nuevo creado por Meridian. Reusar
   # una ruta preexistente permitiría mezclar evidencia entre sesiones y, bajo
   # sudo, podría hacer que el proceso privilegiado escribiera dentro de una ruta
   # preparada previamente por otro usuario. mkdir sin -p nos da una creación
   # atómica: si el nombre ya existe (archivo, directorio o symlink), fallamos.
-  output_parent="$(dirname "$output_dir")"
+  output_parent="$("$_ENGINE_DIRNAME" "$output_dir")"
   if [ -L "$output_parent" ]; then
     printf '%s\n' "[FATAL] El directorio padre de salida no puede ser symlink: $output_parent" >&2
     return 1
   fi
   if [ ! -d "$output_parent" ]; then
-    if ! mkdir -p "$output_parent" 2>/dev/null; then
+    if ! "$_ENGINE_MKDIR" -p "$output_parent" 2>/dev/null; then
       printf '%s\n' "[FATAL] No se pudo crear el directorio padre de salida: $output_parent" >&2
       return 1
     fi
@@ -36,7 +71,7 @@ engine_init() {
     printf '%s\n' "[FATAL] El directorio de sesión ya existe y no será reutilizado: $output_dir" >&2
     return 1
   fi
-  if ! mkdir "$output_dir" 2>/dev/null; then
+  if ! "$_ENGINE_MKDIR" "$output_dir" 2>/dev/null; then
     printf '%s\n' "[FATAL] No se pudo crear de forma exclusiva el directorio de sesión: $output_dir" >&2
     return 1
   fi
@@ -53,7 +88,7 @@ engine_init() {
     printf '%s\n' "[FATAL] El directorio de evidencia ya existe inesperadamente: $MERIDIAN_EVIDENCE_DIR" >&2
     return 1
   fi
-  if ! mkdir "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null; then
+  if ! "$_ENGINE_MKDIR" "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null; then
     printf '%s\n' "[FATAL] No se pudo crear el directorio de evidencia: $MERIDIAN_EVIDENCE_DIR" >&2
     return 1
   fi
@@ -222,14 +257,19 @@ _engine_add_internal_error() {
 }
 
 _engine_run_module() {
-  local module_id="$1" module_name serialized run_rc status_icon expected_version
+  local module_id="$1" module_name serialized run_rc status_icon expected_version line_count
   registry_exists "$module_id" || { log_warn "engine" "Módulo no registrado: $module_id"; return 0; }
   module_name="$(registry_get_field "$module_id" 2)"
   expected_version="$(registry_get_field "$module_id" 4)"
   log_info "engine" "▷ ${module_name} (${module_id})"
 
+  if ! _engine_require_system_tools; then
+    log_error "engine" "No están disponibles las utilidades de sistema requeridas por el worker del engine"
+    return 1
+  fi
+
   local tmp_base="${TMPDIR:-/tmp}" capture
-  capture="$(mktemp "${tmp_base%/}/meridian_engine.XXXXXX")" || return 1
+  capture="$("$_ENGINE_MKTEMP" "${tmp_base%/}/meridian_engine.XXXXXX")" || return 1
 
   if module_loader_run "$module_id" "$MERIDIAN_EVIDENCE_DIR" >"$capture"; then
     run_rc=0
@@ -237,9 +277,23 @@ _engine_run_module() {
     run_rc=$?
   fi
 
-  serialized="$(tail -n 1 "$capture" 2>/dev/null)"
-  if [ "$(wc -l < "$capture" | tr -d ' ')" -gt 1 ]; then sed '$d' "$capture" >&2; fi
-  rm -f "$capture"
+  # stdout del loader es una frontera de datos: la última línea es el framing
+  # canónico y cualquier línea anterior se conserva como salida diagnóstica.
+  # Usamos únicamente binarios del sistema para que un PATH hostil no pueda
+  # alterar, ocultar o fabricar el DiagnosticResult que entra al aggregator.
+  serialized="$("$_ENGINE_TAIL" -n 1 "$capture" 2>/dev/null)"
+  line_count="$("$_ENGINE_WC" -l < "$capture" | "$_ENGINE_TR" -d ' ')"
+  case "$line_count" in
+    ''|*[!0-9]*)
+      "$_ENGINE_RM" -f "$capture"
+      log_error "engine" "No se pudo determinar de forma segura el framing de salida del módulo '${module_id}'"
+      return 1
+      ;;
+  esac
+  if [ "$line_count" -gt 1 ]; then
+    "$_ENGINE_SED" '$d' "$capture" >&2
+  fi
+  "$_ENGINE_RM" -f "$capture"
 
   if [ -z "$serialized" ] || [ "$run_rc" -ne 0 ]; then
     log_error "engine" "Módulo '${module_id}' no produjo resultado válido"
