@@ -35,13 +35,20 @@ trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
 
 # Caso 1: ambos renderers exitosos y el service conserva ambas rutas.
 CAPTURED_SUMMARY=""
-renderer_txt_generate() { CAPTURED_SUMMARY="$3"; printf '%s\n' "$1/Executive_Report.txt"; }
-renderer_json_generate() { printf '%s\n' "$1/results.json"; }
+renderer_txt_generate() {
+  CAPTURED_SUMMARY="$3"
+  : > "$1/Executive_Report.txt" || return 1
+  printf '%s\n' "$1/Executive_Report.txt"
+}
+renderer_json_generate() {
+  : > "$1/results.json" || return 1
+  printf '%s\n' "$1/results.json"
+}
 
 if reporting_service_generate "$TMP_ROOT" txt json; then
-  _pass "reporting service succeeds when both renderers succeed"
+  _pass "reporting service succeeds when both renderers create artifacts"
 else
-  _fail "reporting service succeeds when both renderers succeed"
+  _fail "reporting service succeeds when both renderers create artifacts"
 fi
 _assert_eq "$TMP_ROOT/Executive_Report.txt" "$REPORTING_TXT_PATH" "TXT path is retained"
 _assert_eq "$TMP_ROOT/results.json" "$REPORTING_JSON_PATH" "JSON path is retained"
@@ -51,7 +58,11 @@ _assert_eq "total=1 pass=1 warn=0 fail=0 skip=0 error=0 worst_severity=INFO" "$C
 TXT_CALLED=0
 JSON_CALLED=0
 renderer_txt_generate() { TXT_CALLED=$((TXT_CALLED + 1)); return 1; }
-renderer_json_generate() { JSON_CALLED=$((JSON_CALLED + 1)); printf '%s\n' "$1/results.json"; }
+renderer_json_generate() {
+  JSON_CALLED=$((JSON_CALLED + 1))
+  : > "$1/results.json" || return 1
+  printf '%s\n' "$1/results.json"
+}
 
 if reporting_service_generate "$TMP_ROOT" txt json; then
   _fail "reporting service reports partial renderer failure"
@@ -92,7 +103,7 @@ else
   _pass "reporting service fails when session summary is unavailable"
 fi
 
-# Caso 6: un renderer que retorna rc=0 pero no entrega ruta no cuenta como éxito.
+# Caso 6: rc=0 sin ruta no cuenta como éxito.
 diagnostic_service_get_summary() { printf '%s\n' 'total=1 pass=1 warn=0 fail=0 skip=0 error=0 worst_severity=INFO'; }
 renderer_txt_generate() { return 0; }
 if reporting_service_generate "$TMP_ROOT" txt; then
@@ -101,6 +112,40 @@ else
   _pass "reporting service rejects empty renderer success path"
 fi
 _assert_eq "" "$REPORTING_TXT_PATH" "empty renderer success does not publish TXT path"
+
+# Caso 7: una ruta no vacía pero inexistente tampoco es un artefacto válido.
+renderer_txt_generate() { printf '%s\n' "$1/ghost-report.txt"; }
+if reporting_service_generate "$TMP_ROOT" txt; then
+  _fail "reporting service rejects nonexistent renderer artifact"
+else
+  _pass "reporting service rejects nonexistent renderer artifact"
+fi
+_assert_eq "" "$REPORTING_TXT_PATH" "nonexistent artifact is not published"
+
+# Caso 8: un renderer no puede publicar un archivo fuera del directorio de sesión.
+OUTSIDE_FILE="${TMP_ROOT}.outside.txt"
+: > "$OUTSIDE_FILE" || exit 1
+renderer_txt_generate() { printf '%s\n' "$OUTSIDE_FILE"; }
+if reporting_service_generate "$TMP_ROOT" txt; then
+  _fail "reporting service rejects artifact outside session directory"
+else
+  _pass "reporting service rejects artifact outside session directory"
+fi
+_assert_eq "" "$REPORTING_TXT_PATH" "outside artifact is not published"
+rm -f "$OUTSIDE_FILE"
+
+# Caso 9: symlinks no se publican como artefactos canónicos de reporting.
+REAL_FILE="$TMP_ROOT/real-report.txt"
+LINK_FILE="$TMP_ROOT/link-report.txt"
+: > "$REAL_FILE" || exit 1
+ln -s "$REAL_FILE" "$LINK_FILE" || exit 1
+renderer_txt_generate() { printf '%s\n' "$LINK_FILE"; }
+if reporting_service_generate "$TMP_ROOT" txt; then
+  _fail "reporting service rejects symlink renderer artifact"
+else
+  _pass "reporting service rejects symlink renderer artifact"
+fi
+_assert_eq "" "$REPORTING_TXT_PATH" "symlink artifact is not published"
 
 printf '\nTests: %s | Failures: %s\n' "$TESTS" "$FAILURES"
 [ "$FAILURES" -eq 0 ]
