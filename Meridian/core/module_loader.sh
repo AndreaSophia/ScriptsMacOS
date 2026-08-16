@@ -81,6 +81,15 @@ _manifest_validate() {
   repairable="$(_manifest_get "$manifest" repairable)"
   dependencies="$(_manifest_get_list_csv "$manifest" dependencies)"
 
+  # El directorio y el ejecutable de diagnóstico forman parte de la identidad
+  # del módulo registrado. No seguimos symlinks aquí: un destino mutable podría
+  # cambiar después del discovery y, en módulos root, terminar ejecutándose con
+  # privilegios elevados fuera del árbol esperado de Meridian.
+  if [ -L "$module_dir" ]; then
+    log_warn "module_loader" "Módulo '$(basename "$module_dir")': directorio symlink no permitido"
+    errors=$((errors + 1))
+  fi
+
   # id: snake_case y consistente con el nombre del directorio. El registry
   # depende de IDs deterministas; aceptar aliases silenciosos hace ambiguo el
   # lookup de módulos, reglas y reparaciones.
@@ -171,6 +180,9 @@ _manifest_validate() {
   if [ ! -f "${module_dir}/diagnose.sh" ]; then
     log_warn "module_loader" "Módulo '$id': falta diagnose.sh"
     errors=$((errors + 1))
+  elif [ -L "${module_dir}/diagnose.sh" ]; then
+    log_warn "module_loader" "Módulo '$id': diagnose.sh no puede ser symlink"
+    errors=$((errors + 1))
   fi
 
   if [ "$repairable" = "true" ]; then
@@ -243,9 +255,9 @@ module_loader_discover() {
 # (DiagnosticResult) viaja por un archivo separado de stdout, para que cualquier
 # printf/echo del módulo no pueda corromper la serialización.
 #
-# IMPORTANTE: Meridian usa `set -e` en el entrypoint. Todo retorno no-cero que
-# forme parte del protocolo de un módulo se captura dentro de un `if`; así
-# errexit no puede abortar la sesión antes de serializar el DiagnosticResult.
+# IMPORTANTE: no se confía en `set -e` para detectar fallos de infraestructura.
+# Esta función se invoca desde una condición y Bash puede suprimir errexit en ese
+# contexto. Cada paso crítico del worker devuelve un código explícito 70-76.
 _module_execute_isolated() {
   local module_id="$1" module_dir="$2" evidence_dir="$3" timeout_seconds="$4"
   local tmp_base="${TMPDIR:-/tmp}" result_file stdout_file
@@ -257,8 +269,12 @@ _module_execute_isolated() {
   }
 
   (
-    source "${MERIDIAN_CORE_DIR}/result_model.sh"
-    source "${MERIDIAN_LOGGING_DIR}/logger.sh"
+    if ! source "${MERIDIAN_CORE_DIR}/result_model.sh"; then
+      exit 70
+    fi
+    if ! source "${MERIDIAN_LOGGING_DIR}/logger.sh"; then
+      exit 71
+    fi
 
     export MERIDIAN_MODULE_DIR="$module_dir"
     export MERIDIAN_EVIDENCE_DIR="$evidence_dir"
@@ -266,24 +282,35 @@ _module_execute_isolated() {
     export MERIDIAN_TEST_MODE="${MERIDIAN_TEST_MODE:-0}"
     export MERIDIAN_FIXTURE_DIR="${MERIDIAN_FIXTURE_DIR:-}"
 
-    result_init
+    if ! result_init; then
+      exit 72
+    fi
     RESULT_MODULE_ID="$module_id"
     RESULT_MODULE_VERSION="$(_manifest_get "${module_dir}/manifest.yaml" version)"
+    if [ -z "$RESULT_MODULE_VERSION" ]; then
+      exit 73
+    fi
 
-    result_time_start
+    if ! result_time_start; then
+      exit 74
+    fi
     local module_rc
     if source "${module_dir}/diagnose.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
       module_rc=0
     else
       module_rc=$?
     fi
-    result_time_end
+    if ! result_time_end; then
+      exit 75
+    fi
 
     if [ "$module_rc" -ne 0 ] && [ "${RESULT_EXIT_CODE:-0}" -eq 0 ] 2>/dev/null; then
       RESULT_EXIT_CODE="$module_rc"
     fi
 
-    result_serialize > "$result_file"
+    if ! result_serialize > "$result_file"; then
+      exit 76
+    fi
     exit "$module_rc"
   ) &
 
@@ -348,7 +375,14 @@ module_loader_run() {
   fi
 
   module_evidence_dir="${evidence_dir}/${module_id}"
-  mkdir -p "$module_evidence_dir" 2>/dev/null
+  if [ -L "$module_evidence_dir" ]; then
+    log_error "module_loader" "Directorio de evidencia symlink rechazado para '${module_id}'"
+    return 1
+  fi
+  if ! mkdir -p "$module_evidence_dir" 2>/dev/null; then
+    log_error "module_loader" "No se pudo crear evidencia para '${module_id}': $module_evidence_dir"
+    return 1
+  fi
   log_info "module_loader" "Ejecutando módulo: ${module_id} (timeout: ${timeout}s)"
 
   if serialized_result="$(_module_execute_isolated "$module_id" "$module_dir" "$module_evidence_dir" "$timeout")"; then
@@ -374,6 +408,15 @@ module_loader_run() {
     RESULT_RAW_OUTPUT=""
     result_serialize
     return 0
+  fi
+
+  # Los códigos 70-76 están reservados para la infraestructura del worker y
+  # solo se interpretan así cuando no existe un DiagnosticResult serializado.
+  # Un diagnose.sh que retorne, por ejemplo, 70 pero sí produzca resultado sigue
+  # tratándose como un fallo normal del módulo y se normaliza más abajo.
+  if [ -z "$serialized_result" ] && [ "$rc" -ge 70 ] 2>/dev/null && [ "$rc" -le 76 ] 2>/dev/null; then
+    log_error "module_loader" "Infraestructura del worker falló para '${module_id}' (rc=${rc})"
+    return 1
   fi
 
   if [ -z "$serialized_result" ]; then
