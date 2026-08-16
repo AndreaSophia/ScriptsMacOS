@@ -46,7 +46,7 @@ _find_result() {
   local wanted="$1" line
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    result_deserialize "$line"
+    result_deserialize "$line" || continue
     if [ "$RESULT_MODULE_ID" = "$wanted" ]; then
       printf '%s\n' "$line"
       return 0
@@ -95,7 +95,7 @@ module_loader_discover "${MERIDIAN_ROOT}/modules" 2>/dev/null
 rule_loader_load "${MERIDIAN_ROOT}/rules/definitions" 2>/dev/null
 
 assert_eq "6 módulos MVP cargados" "6" "$(registry_count)"
-assert_eq "7 reglas MVP cargadas" "7" "$(rule_loader_count)"
+assert_eq "10 reglas actuales cargadas" "10" "$(rule_loader_count)"
 
 printf "\n  Ejecutando módulo filevault (fixture: disabled)...\n"
 _engine_run_module "filevault" 2>/dev/null
