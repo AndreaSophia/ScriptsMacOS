@@ -5,6 +5,16 @@
 # Compatible con Bash 3.2/macOS sin dependencias GNU.
 # =============================================================================
 
+# Este archivo se carga tanto por el entrypoint como por workers aislados. Los
+# subshells de Bash heredan funciones/variables del padre, por lo que un segundo
+# `source` no debe redeclarar constantes readonly ni producir ruido en stderr.
+# El guard se evalúa antes de cualquier declaración y mantiene el contrato
+# inmutable sin relajar los readonly.
+if [ "${_MERIDIAN_RESULT_MODEL_LOADED:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+readonly _MERIDIAN_RESULT_MODEL_LOADED=1
+
 readonly _VALID_STATUSES="PASS WARN FAIL SKIP ERROR"
 readonly _VALID_SEVERITIES="INFO LOW MEDIUM HIGH CRITICAL"
 readonly _VALID_REPAIR_RISKS="NONE LOW MEDIUM HIGH CRITICAL"
