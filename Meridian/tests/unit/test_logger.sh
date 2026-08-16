@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Meridian — tests/unit/test_logger.sh
-# Regresión para integridad de registros del audit log.
+# Regresión para integridad y frontera de destino del audit log.
 # =============================================================================
 
 MERIDIAN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -56,6 +56,22 @@ assert_eq "audit: conserva siete columnas estructurales" "7" "$field_count"
 assert_contains "audit: codifica pipes" "%7C" "$audit_line"
 assert_contains "audit: codifica porcentajes" "%25" "$audit_line"
 assert_contains "audit: codifica saltos de línea" "%0A" "$audit_line"
+
+# El logger nunca debe seguir un symlink proporcionado como destino. Esta
+# regresión se puede verificar sin root usando el override permitido en modo
+# no privilegiado; la misma comprobación protege la ruta corporativa fija.
+real_target="${_tmp_dir}/do-not-touch.log"
+symlink_target="${_tmp_dir}/audit-link.log"
+printf '%s\n' 'sentinel' > "$real_target"
+ln -s "$real_target" "$symlink_target" || exit 1
+export MERIDIAN_AUDIT_LOG="$symlink_target"
+
+if log_audit "logger_test" "SYMLINK_REJECT" "must-not-append" >/dev/null 2>&1; then
+  assert_eq "audit: symlink de destino es rechazado" "rejected" "accepted"
+else
+  assert_eq "audit: symlink de destino es rechazado" "rejected" "rejected"
+fi
+assert_eq "audit: rechazo de symlink no modifica el target" "sentinel" "$(cat "$real_target")"
 
 printf "\n  Resultado: %d OK, %d FAIL\n\n" "$_pass" "$_fail"
 [ "$_fail" -eq 0 ]
