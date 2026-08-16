@@ -6,7 +6,7 @@
 
 validation_engine_run() {
   local module_id="$1"
-  local module_dir result_file stdout_file tmp_base serialized expected_version worker_rc
+  local module_dir validator_path result_file stdout_file tmp_base serialized expected_version worker_rc
 
   if ! registry_exists "$module_id"; then
     log_error "validation_engine" "Módulo no registrado: $module_id"
@@ -16,13 +16,22 @@ validation_engine_run() {
 
   module_dir="$(registry_get_path "$module_id")"
   expected_version="$(registry_get_field "$module_id" 4)"
+  validator_path="${module_dir}/validate.sh"
 
   # La validación post-reparación es parte de la frontera de seguridad del
   # contrato IModule. Si desaparece en runtime, no podemos considerar la
-  # reparación validada ni devolver éxito por omisión.
-  if [ -z "$module_dir" ] || [ ! -f "${module_dir}/validate.sh" ]; then
+  # reparación validada ni devolver éxito por omisión. Tampoco seguimos
+  # symlinks: validate.sh se ejecuta dentro de un proceso privilegiado y su
+  # destino no debe poder cambiar fuera del árbol registrado del módulo.
+  if [ -z "$module_dir" ] || [ ! -f "$validator_path" ]; then
     log_error "validation_engine" "validate.sh no disponible para módulo: $module_id"
     log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=validator_unavailable"
+    return 1
+  fi
+
+  if [ -L "$module_dir" ] || [ -L "$validator_path" ]; then
+    log_error "validation_engine" "Ruta de validación no confiable para módulo: $module_id"
+    log_audit "validation_engine" "VALIDATION_ERROR" "module=${module_id} reason=validator_symlink_rejected"
     return 1
   fi
 
@@ -61,7 +70,7 @@ validation_engine_run() {
     # El retorno de validate.sh es parte del protocolo. Se captura para poder
     # serializar un DiagnosticResult incluso cuando el validator retorna != 0.
     local validate_rc
-    if source "${module_dir}/validate.sh" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
+    if source "$validator_path" >"$stdout_file" 2>>"${MERIDIAN_LOG_FILE:-/dev/null}"; then
       validate_rc=0
     else
       validate_rc=$?
