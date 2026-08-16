@@ -47,15 +47,22 @@ privilege_check_module() {
   return 0
 }
 
-# En el MVP solo LOW y MEDIUM son ejecutables.
-# HIGH y CRITICAL quedan bloqueados hasta que exista una política explícita
-# de reparación avanzada y cobertura de tests suficiente.
+# En el MVP solo LOW y MEDIUM son riesgos ejecutables.
+# NONE significa explícitamente "no existe reparación" en IDiagnosticResult y
+# por tanto nunca debe autorizar una acción si esta función se invoca de forma
+# aislada. HIGH y CRITICAL quedan bloqueados hasta que exista una política
+# explícita de reparación avanzada y cobertura de tests suficiente.
 privilege_check_repair() {
   local repair_risk="$1"
 
   case "$repair_risk" in
-    NONE|LOW|MEDIUM)
+    LOW|MEDIUM)
       return 0
+      ;;
+    NONE)
+      log_error "privilege_manager" \
+        "repair_risk=NONE no representa una reparación ejecutable."
+      return 1
       ;;
     HIGH)
       log_error "privilege_manager" \
