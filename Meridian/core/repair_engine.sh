@@ -93,9 +93,11 @@ repair_engine_run() {
     return 1
   fi
 
-  # El core no implementa su propia semántica de confirmación. Si la frontera
-  # UI no fue cargada, la reparación falla de forma segura en vez de improvisar.
-  if ! command -v tui_confirm_repair >/dev/null 2>&1; then
+  # La confirmación debe ser exactamente la función TUI cargada por Meridian.
+  # `command -v` también acepta ejecutables externos; bajo root, un PATH hostil
+  # podría hacer pasar un binario llamado tui_confirm_repair por esta frontera.
+  # `declare -F` es builtin de Bash 3.2 y solo reconoce funciones del shell.
+  if ! declare -F tui_confirm_repair >/dev/null 2>&1; then
     log_error "repair_engine" "Frontera de confirmación no disponible"
     log_audit "repair_engine" "REPAIR_BLOCKED" "module=${module_id} reason=confirmation_unavailable"
     return 1
