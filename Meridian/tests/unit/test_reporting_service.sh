@@ -33,10 +33,17 @@ source "${MERIDIAN_ROOT}/services/reporting_service.sh"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/meridian_reporting_test.XXXXXX")" || exit 1
 trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
 
+# Los renderers se invocan dentro de command substitution para capturar su ruta.
+# Por diseño eso ocurre en un subshell: los tests no pueden observar llamadas o
+# argumentos mediante variables globales. Usamos archivos marcador, que cruzan
+# correctamente esa frontera de proceso.
+SUMMARY_MARKER="$TMP_ROOT/summary-captured"
+TXT_MARKER="$TMP_ROOT/txt-called"
+JSON_MARKER="$TMP_ROOT/json-called"
+
 # Caso 1: ambos renderers exitosos y el service conserva ambas rutas.
-CAPTURED_SUMMARY=""
 renderer_txt_generate() {
-  CAPTURED_SUMMARY="$3"
+  printf '%s\n' "$3" > "$SUMMARY_MARKER" || return 1
   : > "$1/Executive_Report.txt" || return 1
   printf '%s\n' "$1/Executive_Report.txt"
 }
@@ -52,14 +59,17 @@ else
 fi
 _assert_eq "$TMP_ROOT/Executive_Report.txt" "$REPORTING_TXT_PATH" "TXT path is retained"
 _assert_eq "$TMP_ROOT/results.json" "$REPORTING_JSON_PATH" "JSON path is retained"
+CAPTURED_SUMMARY="$(cat "$SUMMARY_MARKER" 2>/dev/null || true)"
 _assert_eq "total=1 pass=1 warn=0 fail=0 skip=0 error=0 worst_severity=INFO" "$CAPTURED_SUMMARY" "summary comes through diagnostic service boundary"
 
 # Caso 2: TXT falla, JSON debe ejecutarse igualmente y conservar su ruta.
-TXT_CALLED=0
-JSON_CALLED=0
-renderer_txt_generate() { TXT_CALLED=$((TXT_CALLED + 1)); return 1; }
+rm -f "$TXT_MARKER" "$JSON_MARKER"
+renderer_txt_generate() {
+  printf 'called\n' >> "$TXT_MARKER"
+  return 1
+}
 renderer_json_generate() {
-  JSON_CALLED=$((JSON_CALLED + 1))
+  printf 'called\n' >> "$JSON_MARKER"
   : > "$1/results.json" || return 1
   printf '%s\n' "$1/results.json"
 }
@@ -71,6 +81,8 @@ else
 fi
 _assert_eq "" "$REPORTING_TXT_PATH" "failed TXT renderer leaves empty path"
 _assert_eq "$TMP_ROOT/results.json" "$REPORTING_JSON_PATH" "successful JSON path survives TXT failure"
+TXT_CALLED="$(wc -l < "$TXT_MARKER" 2>/dev/null | tr -d ' ' || printf '0')"
+JSON_CALLED="$(wc -l < "$JSON_MARKER" 2>/dev/null | tr -d ' ' || printf '0')"
 _assert_eq "1" "$TXT_CALLED" "TXT renderer attempted once"
 _assert_eq "1" "$JSON_CALLED" "JSON renderer still attempted after TXT failure"
 
