@@ -9,10 +9,35 @@ _ENGINE_DEP_VISITING=""
 _ENGINE_DEP_ORDER=""
 
 engine_init() {
-  local output_dir="$1"
+  local output_dir="$1" output_parent
 
   if [ -z "$output_dir" ]; then
     printf '%s\n' "[FATAL] engine_init requiere un directorio de salida" >&2
+    return 1
+  fi
+
+  # La sesión debe nacer como un directorio nuevo creado por Meridian. Reusar
+  # una ruta preexistente permitiría mezclar evidencia entre sesiones y, bajo
+  # sudo, podría hacer que el proceso privilegiado escribiera dentro de una ruta
+  # preparada previamente por otro usuario. mkdir sin -p nos da una creación
+  # atómica: si el nombre ya existe (archivo, directorio o symlink), fallamos.
+  output_parent="$(dirname "$output_dir")"
+  if [ -L "$output_parent" ]; then
+    printf '%s\n' "[FATAL] El directorio padre de salida no puede ser symlink: $output_parent" >&2
+    return 1
+  fi
+  if [ ! -d "$output_parent" ]; then
+    if ! mkdir -p "$output_parent" 2>/dev/null; then
+      printf '%s\n' "[FATAL] No se pudo crear el directorio padre de salida: $output_parent" >&2
+      return 1
+    fi
+  fi
+  if [ -e "$output_dir" ] || [ -L "$output_dir" ]; then
+    printf '%s\n' "[FATAL] El directorio de sesión ya existe y no será reutilizado: $output_dir" >&2
+    return 1
+  fi
+  if ! mkdir "$output_dir" 2>/dev/null; then
+    printf '%s\n' "[FATAL] No se pudo crear de forma exclusiva el directorio de sesión: $output_dir" >&2
     return 1
   fi
 
@@ -21,8 +46,15 @@ engine_init() {
   export MERIDIAN_CORE_DIR="${MERIDIAN_ROOT}/core"
   export MERIDIAN_LOGGING_DIR="${MERIDIAN_ROOT}/logging"
 
-  if ! mkdir -p "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null; then
-    printf '%s\n' "[FATAL] No se pudo crear el directorio de salida: $output_dir" >&2
+  # El directorio de evidencia tampoco se reutiliza. Si aparece después de la
+  # creación exclusiva de la sesión, tratamos el estado como una carrera o una
+  # mutación externa y fallamos cerrado.
+  if [ -e "$MERIDIAN_EVIDENCE_DIR" ] || [ -L "$MERIDIAN_EVIDENCE_DIR" ]; then
+    printf '%s\n' "[FATAL] El directorio de evidencia ya existe inesperadamente: $MERIDIAN_EVIDENCE_DIR" >&2
+    return 1
+  fi
+  if ! mkdir "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null; then
+    printf '%s\n' "[FATAL] No se pudo crear el directorio de evidencia: $MERIDIAN_EVIDENCE_DIR" >&2
     return 1
   fi
 
