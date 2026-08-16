@@ -49,7 +49,8 @@ printf "\n\033[1mtest_rule_engine.sh\033[0m\n\n"
 rule_loader_load "${MERIDIAN_ROOT}/rules/definitions" 2>/dev/null
 count="$(rule_loader_count)"
 
-assert_eq "rule_loader: carga las 7 reglas MVP" "7" "$count"
+# Baseline actual: 2 compliance + 4 network/EDR + 4 security = 10 reglas.
+assert_eq "rule_loader: carga las 10 reglas actuales" "10" "$count"
 
 # --- Test: regla filevault_disabled se activa cuando status=FAIL ---
 result_init
@@ -121,25 +122,20 @@ rule_engine_evaluate "crowdstrike" 2>/dev/null
 assert_eq "rule: crowdstrike_not_installed no activa en PASS" "" "$RESULT_RULE_TRIGGERED"
 
 # --- Test: rule_loader rechaza realmente un bloque inválido ---
-# El loader solo descubre *.rules.yaml, por lo que el fixture temporal debe
-# respetar ese patrón; el test anterior usaba mktemp sin sufijo y no probaba nada.
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/meridian_rules.XXXXXX")"
 tmp_rules="${tmp_dir}/invalid.rules.yaml"
 printf 'condition_module: filevault\ncondition_field: status\ncondition_operator: equals\ncondition_value: FAIL\nresult_severity: HIGH\n---\n' > "$tmp_rules"
 rule_loader_load "$tmp_dir" 2>/dev/null
 assert_eq "rule_loader: bloque sin rule_id no se incorpora" "0" "$(rule_loader_count)"
 
-# Operadores fuera del vocabulario no deben llegar al runtime.
 printf 'rule_id: invalid_operator\ncondition_module: filevault\ncondition_field: status\ncondition_operator: execute\ncondition_value: FAIL\nresult_severity: HIGH\nresult_repairable: false\nresult_repair_risk: NONE\n---\n' > "$tmp_rules"
 rule_loader_load "$tmp_dir" 2>/dev/null
 assert_eq "rule_loader: operador desconocido se rechaza" "0" "$(rule_loader_count)"
 
-# Un bloque no-reparable no puede declarar riesgo de reparación.
 printf 'rule_id: invalid_repair_contract\ncondition_module: filevault\ncondition_field: status\ncondition_operator: equals\ncondition_value: FAIL\nresult_severity: HIGH\nresult_repairable: false\nresult_repair_risk: MEDIUM\n---\n' > "$tmp_rules"
 rule_loader_load "$tmp_dir" 2>/dev/null
 assert_eq "rule_loader: repair contract incoherente se rechaza" "0" "$(rule_loader_count)"
 
-# is_empty/is_not_empty no requieren condition_value por definición.
 printf 'rule_id: empty_value_operator\ncondition_module: filevault\ncondition_field: evidence\ncondition_operator: is_empty\nresult_severity: MEDIUM\nresult_repairable: false\nresult_repair_risk: NONE\n---\n' > "$tmp_rules"
 rule_loader_load "$tmp_dir" 2>/dev/null
 assert_eq "rule_loader: is_empty acepta condition_value omitido" "1" "$(rule_loader_count)"
@@ -147,9 +143,8 @@ rm -rf "$tmp_dir"
 
 # --- Re-cargar reglas reales para verificar que load() reemplaza estado previo ---
 rule_loader_load "${MERIDIAN_ROOT}/rules/definitions" 2>/dev/null
-assert_eq "rule_loader: recarga limpia las 7 reglas MVP" "7" "$(rule_loader_count)"
+assert_eq "rule_loader: recarga limpia las 10 reglas actuales" "10" "$(rule_loader_count)"
 
-# --- Resumen ---
 printf "\n  ─────────────────────────────────────\n"
 printf "  Pasaron: %s | Fallaron: %s\n" "$_pass" "$_fail"
 printf "  ─────────────────────────────────────\n\n"
