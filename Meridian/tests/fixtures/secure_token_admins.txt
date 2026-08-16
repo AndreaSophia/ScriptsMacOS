@@ -1,0 +1,2 @@
+safiye|501|ENABLED
+lcladmin|502|DISABLED
