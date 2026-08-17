@@ -65,6 +65,7 @@ export MERIDIAN_DEBUG=0
 export MERIDIAN_VERSION="1.0.0-mvp"
 export MERIDIAN_ORG="Apple Platform Team"
 export MERIDIAN_FIXTURE_DIR="${MERIDIAN_ROOT}/tests/fixtures"
+export MERIDIAN_POLICY_CURRENT_USER="safiye"
 
 printf "  Cargando core...\n"
 source "${MERIDIAN_ROOT}/logging/logger.sh"
@@ -113,20 +114,22 @@ assert_eq "filevault: status=FAIL en modo test (fixture disabled)" "FAIL" "$fv_s
 assert_eq "filevault: regla eleva severity a CRITICAL" "CRITICAL" "$fv_severity"
 assert_eq "filevault: rule_triggered=filevault_disabled" "filevault_disabled" "$fv_rule"
 
-printf "\n  Ejecutando módulo secure_token (fixture: admin mixto)...\n"
+printf "\n  Ejecutando módulo secure_token (fixture: política incumplida)...\n"
 _engine_run_module "secure_token" 2>/dev/null
 st_line="$(_find_result secure_token)"
 if [ -n "$st_line" ]; then
   result_deserialize "$st_line"
   st_status="$RESULT_STATUS"
+  st_severity="$RESULT_SEVERITY"
   st_evidence="$RESULT_EVIDENCE"
 else
-  st_status=""; st_evidence=""
+  st_status=""; st_severity=""; st_evidence=""
 fi
-assert_eq "secure_token: admin mixto produce WARN" "WARN" "$st_status"
+assert_eq "secure_token: cuenta requerida sin token produce FAIL" "FAIL" "$st_status"
+assert_eq "secure_token: incumplimiento de política es HIGH" "HIGH" "$st_severity"
 case "$st_evidence" in
-  *"Secure Token ENABLED"*"Secure Token DISABLED"*)
-    printf "  \033[1;32m✓\033[0m  secure_token: evidencia conserva estados por administrador\n"
+  *"[REQUIRED] safiye (UID 501): Secure Token ENABLED"*"[REQUIRED] LCLAdmin (UID 502): Secure Token DISABLED"*"[REQUIRED] AdminCMDB (UID 503): Secure Token DISABLED"*"[INVENTORY] _cyberarkepm (UID 504): Secure Token DISABLED"*)
+    printf "  \033[1;32m✓\033[0m  secure_token: evidencia separa política e inventario\n"
     _pass=$((_pass+1)) ;;
   *)
     printf "  \033[1;31m✗\033[0m  secure_token: evidencia incompleta\n" >&2
