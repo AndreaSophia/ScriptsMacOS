@@ -6,6 +6,7 @@
 # =============================================================================
 
 set -u
+export LC_ALL=C
 
 MERIDIAN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="${MERIDIAN_ROOT}/tests"
@@ -42,30 +43,11 @@ run_test() {
 }
 
 # Los tests viven un nivel bajo unit/ e integration/. El glob evita depender de
-# extensiones GNU de find y el sort mantiene orden estable entre máquinas.
+# extensiones GNU de find. LC_ALL=C hace determinista el orden lexical.
 for suite in unit integration; do
   test_dir="${TEST_ROOT}/${suite}"
   [ -d "$test_dir" ] || continue
 
-  for test_path in "$test_dir"/test_*.sh; do
-    [ -f "$test_path" ] || continue
-    printf '%s\n' "$test_path"
-  done | LC_ALL=C sort | while IFS= read -r test_path; do
-    [ -n "$test_path" ] || continue
-    run_test "$test_path"
-  done
-
-done
-
-# Los while anteriores corren en subshell por el pipe en Bash 3.2, por lo que
-# los contadores no sobrevivirían. Recorremos de nuevo sin pipe, usando el
-# orden lexical natural del glob (estable para los nombres ASCII actuales).
-_pass=0
-_fail=0
-_total=0
-for suite in unit integration; do
-  test_dir="${TEST_ROOT}/${suite}"
-  [ -d "$test_dir" ] || continue
   for test_path in "$test_dir"/test_*.sh; do
     [ -f "$test_path" ] || continue
     run_test "$test_path"
