@@ -111,14 +111,20 @@ _prepare_payload() {
   mkdir -p "${PAYLOAD_DIR}/usr/local/bin"
   mkdir -p "$PKG_SCRIPTS_DIR"
 
-  cp "${PROJECT_ROOT}/meridian" "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
-  cp "${PROJECT_ROOT}/VERSION"  "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/VERSION"
+  # macOS puede materializar forks/extended metadata como archivos AppleDouble
+  # `._*` al copiar. No forman parte de Meridian y no deben entrar al PKG.
+  COPYFILE_DISABLE=1 cp "${PROJECT_ROOT}/meridian" "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
+  COPYFILE_DISABLE=1 cp "${PROJECT_ROOT}/VERSION"  "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/VERSION"
 
   for dir in config modules rules core services reporting logging ui contracts; do
     if [ -d "${PROJECT_ROOT}/${dir}" ]; then
-      cp -R "${PROJECT_ROOT}/${dir}" "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/"
+      COPYFILE_DISABLE=1 cp -R "${PROJECT_ROOT}/${dir}" "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/"
     fi
   done
+
+  # Defensa en profundidad: elimina metadata Finder/AppleDouble que pudiera
+  # existir ya como archivo regular en el checkout de origen.
+  find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type f \( -name '._*' -o -name '.DS_Store' \) -exec rm -f {} \;
 
   # Normalizar permisos del payload. No heredamos bits de escritura/ejecución
   # accidentales del checkout que generó el paquete.
@@ -341,6 +347,12 @@ _verify_pkg() {
         exit 1
       }
     }
+
+    # El artefacto publicado tampoco puede contener metadata AppleDouble/Finder.
+    if pkgutil --payload-files "$output_pkg" | grep -Eq '(^|/)\._|(^|/)\.DS_Store$'; then
+      echo "[ERROR] El PKG contiene metadata AppleDouble/Finder inesperada" >&2
+      exit 1
+    fi
   fi
 
   echo ""
