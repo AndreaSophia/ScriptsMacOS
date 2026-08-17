@@ -147,6 +147,14 @@ log_audit() {
   audit_log="$(_resolve_audit_log)" || return 1
   audit_dir="$("$_LOG_DIRNAME_BIN" "$audit_log")" || return 1
 
+  # El directorio de auditoría también forma parte de la frontera de confianza.
+  # Rechazarlo antes de mkdir/chown/chmod evita seguir un symlink preparado que
+  # redirija operaciones privilegiadas hacia otro árbol del filesystem.
+  if [ -L "$audit_dir" ]; then
+    _log_write "ERROR" "logger" "Directorio de auditoría rechazado por ser symlink: $audit_dir"
+    return 1
+  fi
+
   "$_LOG_MKDIR_BIN" -p "$audit_dir" 2>/dev/null || {
     _log_write "ERROR" "logger" "No se pudo crear directorio de auditoría: $audit_dir"
     return 1
