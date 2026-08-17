@@ -120,5 +120,41 @@ else
 fi
 assert_eq "session log: directorio symlink no crea archivo" "absent" "$([ -e "${real_dir}/diagnostic.log" ] && printf present || printf absent)"
 
+# Frontera privilegiada: un PATH heredado de MDM/sudo no puede seleccionar
+# utilidades usadas por logger_init/log_audit. Envenenamos nombres comunes con
+# ejecutables que fallan; el logger debe continuar usando rutas absolutas macOS.
+poison_dir="${_tmp_dir}/poison-path"
+/bin/mkdir -p "$poison_dir" || exit 1
+for tool in date hostname whoami id dirname mkdir chmod chown rm; do
+  printf '#!/bin/sh\nexit 97\n' > "${poison_dir}/${tool}" || exit 1
+  /bin/chmod 755 "${poison_dir}/${tool}" || exit 1
+done
+
+saved_path="$PATH"
+PATH="$poison_dir"
+export PATH
+poison_session_log="${_tmp_dir}/poison-session/diagnostic.log"
+poison_audit_log="${_tmp_dir}/poison-audit/audit.log"
+export MERIDIAN_AUDIT_LOG="$poison_audit_log"
+
+if logger_init "$poison_session_log" >/dev/null 2>&1; then
+  poison_init_result="created"
+else
+  poison_init_result="failed"
+fi
+if log_audit "logger_test" "PATH_POISON" "absolute-tools-only" >/dev/null 2>&1; then
+  poison_audit_result="written"
+else
+  poison_audit_result="failed"
+fi
+
+PATH="$saved_path"
+export PATH
+
+assert_eq "PATH hostil: logger_init usa herramientas absolutas" "created" "$poison_init_result"
+assert_eq "PATH hostil: audit usa herramientas absolutas" "written" "$poison_audit_result"
+assert_eq "PATH hostil: diagnostic.log existe" "present" "$([ -f "$poison_session_log" ] && printf present || printf absent)"
+assert_eq "PATH hostil: audit.log existe" "present" "$([ -f "$poison_audit_log" ] && printf present || printf absent)"
+
 printf "\n  Resultado: %d OK, %d FAIL\n\n" "$_pass" "$_fail"
 [ "$_fail" -eq 0 ]
