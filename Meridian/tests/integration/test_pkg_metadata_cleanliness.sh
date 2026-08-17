@@ -23,7 +23,7 @@ fail() {
 assert_contains() {
   needle="$1"
   label="$2"
-  if /usr/bin/grep -Fq "$needle" "$BUILD_SCRIPT"; then
+  if /usr/bin/grep -Fq -e "$needle" "$BUILD_SCRIPT"; then
     pass "$label"
   else
     fail "$label"
@@ -36,10 +36,8 @@ else
   fail "build_pkg.sh válido para parser Bash"
 fi
 
-assert_contains 'COPYFILE_DISABLE=1 cp' \
-  "copias del payload deshabilitan metadata lateral de macOS"
-assert_contains '/usr/bin/xattr -cr "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}"' \
-  "payload elimina extended attributes antes de pkgbuild"
+assert_contains '/usr/bin/ditto --norsrc' \
+  "payload se copia sin resource forks/xattrs/ACLs"
 assert_contains "-name '._*'" \
   "payload elimina defensivamente archivos AppleDouble"
 assert_contains "-name '.DS_Store'" \
