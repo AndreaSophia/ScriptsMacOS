@@ -2,7 +2,7 @@
 # =============================================================================
 # Meridian — tests/run_all.sh
 # Ejecuta la regresión completa no destructiva (unit + integration) de forma
-# determinista y compatible con Bash 3.2 de macOS.
+# determinista y compatible con Bash 3.2 + userland BSD nativo de macOS.
 # =============================================================================
 
 set -u
@@ -41,19 +41,35 @@ run_test() {
   fi
 }
 
-# LC_ALL=C mantiene un orden estable entre máquinas y versiones de macOS.
-# Se evita find -print0/read -d porque Bash 3.2 y herramientas BSD deben ser
-# suficientes para el árbol de tests actual (rutas sin saltos de línea).
+# Los tests viven un nivel bajo unit/ e integration/. El glob evita depender de
+# extensiones GNU de find y el sort mantiene orden estable entre máquinas.
 for suite in unit integration; do
   test_dir="${TEST_ROOT}/${suite}"
   [ -d "$test_dir" ] || continue
 
-  while IFS= read -r test_path; do
+  for test_path in "$test_dir"/test_*.sh; do
+    [ -f "$test_path" ] || continue
+    printf '%s\n' "$test_path"
+  done | LC_ALL=C sort | while IFS= read -r test_path; do
     [ -n "$test_path" ] || continue
     run_test "$test_path"
-  done <<EOF
-$(LC_ALL=C find "$test_dir" -type f -name 'test_*.sh' -maxdepth 1 2>/dev/null | LC_ALL=C sort)
-EOF
+  done
+
+done
+
+# Los while anteriores corren en subshell por el pipe en Bash 3.2, por lo que
+# los contadores no sobrevivirían. Recorremos de nuevo sin pipe, usando el
+# orden lexical natural del glob (estable para los nombres ASCII actuales).
+_pass=0
+_fail=0
+_total=0
+for suite in unit integration; do
+  test_dir="${TEST_ROOT}/${suite}"
+  [ -d "$test_dir" ] || continue
+  for test_path in "$test_dir"/test_*.sh; do
+    [ -f "$test_path" ] || continue
+    run_test "$test_path"
+  done
 done
 
 printf '──────────────────────────────────────────────────\n'
