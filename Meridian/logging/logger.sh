@@ -16,9 +16,41 @@ else
   _L_YELLOW=''; _L_RED=''; _L_GRAY=''; _L_WHITE=''; _L_MAGENTA=''
 fi
 
+# Logger puede ejecutarse como root desde Installer, launchd o MDM. No debemos
+# resolver herramientas de filesystem/identidad desde PATH heredado del caller:
+# esas fronteras ya usan rutas canónicas de macOS en el resto del runtime.
+_LOG_DATE_BIN="/bin/date"
+_LOG_HOSTNAME_BIN="/bin/hostname"
+_LOG_WHOAMI_BIN="/usr/bin/whoami"
+_LOG_ID_BIN="/usr/bin/id"
+_LOG_DIRNAME_BIN="/usr/bin/dirname"
+_LOG_MKDIR_BIN="/bin/mkdir"
+_LOG_CHOWN_BIN="/usr/sbin/chown"
+_LOG_CHMOD_BIN="/bin/chmod"
+_LOG_RM_BIN="/bin/rm"
+
+_logger_require_system_tools() {
+  local tool
+  for tool in \
+    "$_LOG_DATE_BIN" \
+    "$_LOG_HOSTNAME_BIN" \
+    "$_LOG_WHOAMI_BIN" \
+    "$_LOG_ID_BIN" \
+    "$_LOG_DIRNAME_BIN" \
+    "$_LOG_MKDIR_BIN" \
+    "$_LOG_CHMOD_BIN" \
+    "$_LOG_RM_BIN"; do
+    if [ ! -x "$tool" ]; then
+      printf '[logger] utilidad del sistema no disponible: %s\n' "$tool" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
 _log_write() {
   local level="$1" component="$2" msg="$3" ts
-  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  ts="$("$_LOG_DATE_BIN" -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s' 'unknown')"
   if [ -n "${MERIDIAN_LOG_FILE:-}" ]; then
     printf '%s [%-5s] [%s] %s\n' "$ts" "$level" "$component" "$msg" \
       >> "${MERIDIAN_LOG_FILE}" 2>/dev/null || true
@@ -64,7 +96,9 @@ log_step() {
 }
 
 _default_audit_log() {
-  if [ "${EUID:-$(id -u 2>/dev/null || echo 1)}" -eq 0 ]; then
+  local euid
+  euid="${EUID:-$("$_LOG_ID_BIN" -u 2>/dev/null || printf '%s' 1)}"
+  if [ "$euid" -eq 0 ]; then
     printf '%s\n' '/Library/Logs/Meridian/audit.log'
   else
     printf '%s\n' "${HOME}/.meridian/audit.log"
@@ -77,7 +111,7 @@ _default_audit_log() {
 # se conserva para ejecución no privilegiada y para el sandbox de fixtures.
 _resolve_audit_log() {
   local euid
-  euid="${EUID:-$(id -u 2>/dev/null || echo 1)}"
+  euid="${EUID:-$("$_LOG_ID_BIN" -u 2>/dev/null || printf '%s' 1)}"
   if [ "$euid" -eq 0 ] && [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
     printf '%s\n' '/Library/Logs/Meridian/audit.log'
   else
@@ -101,14 +135,19 @@ _audit_encode() {
 log_audit() {
   local component="$1" action="$2" detail="$3" ts operator hostname audit_log audit_dir euid
   local operator_safe hostname_safe component_safe action_safe detail_safe
-  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  operator="${SUDO_USER:-$(whoami 2>/dev/null || echo 'unknown')}"
-  hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
-  euid="${EUID:-$(id -u 2>/dev/null || echo 1)}"
-  audit_log="$(_resolve_audit_log)" || return 1
-  audit_dir="$(dirname "$audit_log")"
 
-  mkdir -p "$audit_dir" 2>/dev/null || {
+  if ! _logger_require_system_tools; then
+    return 1
+  fi
+
+  ts="$("$_LOG_DATE_BIN" -u '+%Y-%m-%dT%H:%M:%SZ')" || return 1
+  operator="${SUDO_USER:-$("$_LOG_WHOAMI_BIN" 2>/dev/null || printf '%s' 'unknown')}"
+  hostname="$("$_LOG_HOSTNAME_BIN" -s 2>/dev/null || printf '%s' 'unknown')"
+  euid="${EUID:-$("$_LOG_ID_BIN" -u 2>/dev/null || printf '%s' 1)}"
+  audit_log="$(_resolve_audit_log)" || return 1
+  audit_dir="$("$_LOG_DIRNAME_BIN" "$audit_log")" || return 1
+
+  "$_LOG_MKDIR_BIN" -p "$audit_dir" 2>/dev/null || {
     _log_write "ERROR" "logger" "No se pudo crear directorio de auditoría: $audit_dir"
     return 1
   }
@@ -122,11 +161,15 @@ log_audit() {
   fi
 
   if [ "$euid" -eq 0 ] && [ "$audit_dir" = "/Library/Logs/Meridian" ]; then
-    chown root:admin "$audit_dir" 2>/dev/null || {
+    [ -x "$_LOG_CHOWN_BIN" ] || {
+      _log_write "ERROR" "logger" "Herramienta requerida no disponible: $_LOG_CHOWN_BIN"
+      return 1
+    }
+    "$_LOG_CHOWN_BIN" root:admin "$audit_dir" 2>/dev/null || {
       _log_write "ERROR" "logger" "No se pudo asegurar ownership del directorio de auditoría: $audit_dir"
       return 1
     }
-    chmod 750 "$audit_dir" 2>/dev/null || {
+    "$_LOG_CHMOD_BIN" 750 "$audit_dir" 2>/dev/null || {
       _log_write "ERROR" "logger" "No se pudo asegurar permisos del directorio de auditoría: $audit_dir"
       return 1
     }
@@ -146,11 +189,15 @@ log_audit() {
     }
 
   if [ "$euid" -eq 0 ] && [ "$audit_log" = "/Library/Logs/Meridian/audit.log" ]; then
-    chown root:admin "$audit_log" 2>/dev/null || {
+    [ -x "$_LOG_CHOWN_BIN" ] || {
+      _log_write "ERROR" "logger" "Herramienta requerida no disponible: $_LOG_CHOWN_BIN"
+      return 1
+    }
+    "$_LOG_CHOWN_BIN" root:admin "$audit_log" 2>/dev/null || {
       _log_write "ERROR" "logger" "No se pudo asegurar ownership del audit log: $audit_log"
       return 1
     }
-    chmod 640 "$audit_log" 2>/dev/null || {
+    "$_LOG_CHMOD_BIN" 640 "$audit_log" 2>/dev/null || {
       _log_write "ERROR" "logger" "No se pudo asegurar permisos del audit log: $audit_log"
       return 1
     }
@@ -165,7 +212,11 @@ logger_init() {
   local log_path="$1" log_dir
 
   [ -n "$log_path" ] || return 1
-  log_dir="$(dirname "$log_path")"
+  if ! _logger_require_system_tools; then
+    return 1
+  fi
+
+  log_dir="$("$_LOG_DIRNAME_BIN" "$log_path")" || return 1
 
   # diagnostic.log es un artefacto de sesión nuevo. Nunca truncamos un objeto que
   # ya exista ni seguimos un symlink preparado previamente. Esto vuelve explícita
@@ -177,7 +228,7 @@ logger_init() {
     return 1
   fi
 
-  mkdir -p "$log_dir" 2>/dev/null || return 1
+  "$_LOG_MKDIR_BIN" -p "$log_dir" 2>/dev/null || return 1
 
   if [ -e "$log_path" ] || [ -L "$log_path" ]; then
     printf "  ${_L_RED}✗${_L_RST}  [logger] Destino de log ya existe o es symlink: %s\n" \
@@ -190,9 +241,9 @@ logger_init() {
 
   {
     printf '# Meridian diagnostic.log\n'
-    printf '# Session: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    printf '# Host: %s\n' "$(hostname -s 2>/dev/null || echo 'unknown')"
-    printf '# User: %s\n' "${SUDO_USER:-$(whoami 2>/dev/null || echo 'unknown')}"
+    printf '# Session: %s\n' "$("$_LOG_DATE_BIN" -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf '# Host: %s\n' "$("$_LOG_HOSTNAME_BIN" -s 2>/dev/null || printf '%s' 'unknown')"
+    printf '# User: %s\n' "${SUDO_USER:-$("$_LOG_WHOAMI_BIN" 2>/dev/null || printf '%s' 'unknown')}"
     printf '# Version: %s\n' "${MERIDIAN_VERSION:-unknown}"
     printf '#\n'
   } > "${MERIDIAN_LOG_FILE}" 2>/dev/null || {
@@ -201,10 +252,10 @@ logger_init() {
     return 1
   }
 
-  if ! chmod 600 "${MERIDIAN_LOG_FILE}" 2>/dev/null; then
+  if ! "$_LOG_CHMOD_BIN" 600 "${MERIDIAN_LOG_FILE}" 2>/dev/null; then
     printf "  ${_L_RED}✗${_L_RST}  [logger] No se pudieron asegurar permisos 600 en: %s\n" \
       "$log_path" >&2
-    rm -f "${MERIDIAN_LOG_FILE}" 2>/dev/null || true
+    "$_LOG_RM_BIN" -f "${MERIDIAN_LOG_FILE}" 2>/dev/null || true
     MERIDIAN_LOG_FILE=""
     export MERIDIAN_LOG_FILE
     return 1
