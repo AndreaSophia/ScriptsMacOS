@@ -4,11 +4,28 @@
 
 set -u
 MERIDIAN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-evidence_dir="$(mktemp -d "${TMPDIR:-/tmp}/meridian_crowdstrike.XXXXXX")"
-trap 'rm -rf "$evidence_dir"' EXIT
+evidence_dir="$(mktemp -d "${TMPDIR:-/tmp}/meridian_crowdstrike_evidence.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/meridian_crowdstrike_fixture.XXXXXX")"
+trap 'rm -rf "$evidence_dir" "$fixture_dir"' EXIT
+
+cat > "${fixture_dir}/falconctl_first_error.txt" <<'EOF'
+falconctl transient observation failure
+EOF
+cat > "${fixture_dir}/falconctl_retry_running.txt" <<'EOF'
+=== CloudInfo ===
+Cloud Info
+Host: fixture.cloudsink.net
+Port: 443
+State: connected
+
+=== agent_info ===
+version: 7.39.21104.0
+Sensor operational: true
+Sensor status: loaded
+EOF
 
 export MERIDIAN_TEST_MODE=1
-export MERIDIAN_FIXTURE_DIR="${MERIDIAN_ROOT}/tests/fixtures"
+export MERIDIAN_FIXTURE_DIR="$fixture_dir"
 export MERIDIAN_EVIDENCE_DIR="$evidence_dir"
 source "${MERIDIAN_ROOT}/core/result_model.sh"
 
