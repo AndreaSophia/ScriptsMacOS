@@ -87,6 +87,7 @@ assert_eq "registry_add: rechaza duplicado (count no cambia)" "$count_before" "$
 tmp_evidence="$(mktemp -d "${TMPDIR:-/tmp}/meridian_loader_test.XXXXXX")"
 export MERIDIAN_TEST_MODE=1
 export MERIDIAN_FIXTURE_DIR="${MERIDIAN_ROOT}/tests/fixtures"
+export MERIDIAN_POLICY_CURRENT_USER="safiye"
 serialized="$(module_loader_run "filevault" "$tmp_evidence" 2>/dev/null)"
 run_rc=$?
 assert_eq "module_loader_run: filevault retorna 0" "0" "$run_rc"
@@ -107,10 +108,11 @@ assert_eq "secure_token: retorna 0 con fixture" "0" "$run_rc"
 if [ -n "$serialized" ]; then
   result_deserialize "$serialized"
   assert_eq "secure_token: conserva module_id" "secure_token" "$RESULT_MODULE_ID"
-  assert_eq "secure_token: admin mixto produce WARN" "WARN" "$RESULT_STATUS"
+  assert_eq "secure_token: cuenta requerida sin token produce FAIL" "FAIL" "$RESULT_STATUS"
+  assert_eq "secure_token: incumplimiento de política es HIGH" "HIGH" "$RESULT_SEVERITY"
   case "$RESULT_EVIDENCE" in
-    *"safiye (UID 501): Secure Token ENABLED"*"lcladmin (UID 502): Secure Token DISABLED"*)
-      printf "  \033[1;32m✓\033[0m  secure_token: evidencia lista administradores y estado\n"
+    *"[REQUIRED] safiye (UID 501): Secure Token ENABLED"*"[REQUIRED] LCLAdmin (UID 502): Secure Token DISABLED"*"[REQUIRED] AdminCMDB (UID 503): Secure Token DISABLED"*"[INVENTORY] _cyberarkepm (UID 504): Secure Token DISABLED"*)
+      printf "  \033[1;32m✓\033[0m  secure_token: evidencia separa política e inventario\n"
       _pass=$((_pass+1)) ;;
     *)
       printf "  \033[1;31m✗\033[0m  secure_token: evidencia incompleta\n" >&2
@@ -146,7 +148,7 @@ else
 fi
 
 rm -rf "$tmp_evidence" "$transition_fixture"
-unset MERIDIAN_TEST_MODE MERIDIAN_FIXTURE_DIR
+unset MERIDIAN_TEST_MODE MERIDIAN_FIXTURE_DIR MERIDIAN_POLICY_CURRENT_USER
 
 module_loader_discover "/nonexistent/path" 2>/dev/null
 rc=$?
