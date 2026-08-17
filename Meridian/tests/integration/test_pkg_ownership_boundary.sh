@@ -55,5 +55,23 @@ else
   pass "ningún chown crítico se degrada a best-effort"
 fi
 
+if printf '%s\n' "$postinstall_body" | grep -Fq 'bad_dirs="$(find "$INSTALL_ROOT" -type d ! -perm 755 -print)"'; then
+  pass "postinstall verifica permisos finales de directorios"
+else
+  fail "postinstall no verifica que los directorios terminen en modo 755"
+fi
+
+if printf '%s\n' "$postinstall_body" | grep -Fq 'bad_files="$(find "$INSTALL_ROOT" -type f ! -path "${INSTALL_ROOT}/meridian" ! -perm 644 -print)"'; then
+  pass "postinstall verifica permisos finales de archivos"
+else
+  fail "postinstall no verifica que los archivos terminen en modo 644"
+fi
+
+if printf '%s\n' "$postinstall_body" | grep -Fq 'chmod 755 "${INSTALL_ROOT}/meridian" || exit 1'; then
+  pass "entrypoint conserva modo ejecutable 755"
+else
+  fail "entrypoint no conserva contrato ejecutable 755"
+fi
+
 printf 'Pasaron: %s | Fallaron: %s\n' "$_pass" "$_fail"
 [ "$_fail" -eq 0 ]
