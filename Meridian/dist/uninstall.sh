@@ -70,7 +70,7 @@ _require_root() {
 
 _require_tools() {
   local tool
-  for tool in "$RM_BIN" "$RMDIR_BIN" "$READLINK_BIN"; do
+  for tool in "$RM_BIN" "$RMDIR_BIN" "$READLINK_BIN" "$PKGUTIL_BIN"; do
     [ -x "$tool" ] || {
       printf '[ERROR] Utilidad requerida no disponible: %s\n' "$tool" >&2
       return 1
@@ -138,20 +138,18 @@ _remove_product() {
 }
 
 _forget_receipt() {
-  if [ ! -x "$PKGUTIL_BIN" ]; then
-    printf '⚠ pkgutil no disponible; receipt no verificado\n' >&2
-    return 0
-  fi
-
   if "$PKGUTIL_BIN" --pkg-info "$PKG_IDENTIFIER" >/dev/null 2>&1; then
     if "$PKGUTIL_BIN" --forget "$PKG_IDENTIFIER" >/dev/null 2>&1; then
       printf '✓ receipt retirado: %s\n' "$PKG_IDENTIFIER"
-    else
-      printf '⚠ no se pudo retirar receipt: %s\n' "$PKG_IDENTIFIER" >&2
+      return 0
     fi
-  else
-    printf '· receipt ya ausente: %s\n' "$PKG_IDENTIFIER"
+
+    printf '[ERROR] no se pudo retirar receipt: %s\n' "$PKG_IDENTIFIER" >&2
+    return 1
   fi
+
+  printf '· receipt ya ausente: %s\n' "$PKG_IDENTIFIER"
+  return 0
 }
 
 _purge_logs_if_requested() {
@@ -190,7 +188,7 @@ main() {
     return 1
   }
 
-  _forget_receipt
+  _forget_receipt || return 1
   _purge_logs_if_requested || return 1
 
   printf '%s\n' '✓ Meridian desinstalado'
