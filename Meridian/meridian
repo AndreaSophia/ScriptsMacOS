@@ -13,26 +13,60 @@ set -euo pipefail
 # un umask permisivo del shell, Workspace ONE o launchd.
 umask 027
 
+# El entrypoint puede ejecutarse como root desde sudo, Installer, launchd o MDM.
+# Las utilidades usadas antes y después del chequeo de privilegios se resuelven
+# mediante rutas canónicas de macOS para que PATH heredado no pueda sustituirlas.
+_MERIDIAN_READLINK_BIN="/usr/bin/readlink"
+_MERIDIAN_DIRNAME_BIN="/usr/bin/dirname"
+_MERIDIAN_CAT_BIN="/bin/cat"
+_MERIDIAN_TR_BIN="/usr/bin/tr"
+_MERIDIAN_DSCACHEUTIL_BIN="/usr/bin/dscacheutil"
+_MERIDIAN_AWK_BIN="/usr/bin/awk"
+_MERIDIAN_HOSTNAME_BIN="/bin/hostname"
+_MERIDIAN_DATE_BIN="/bin/date"
+_MERIDIAN_ID_BIN="/usr/bin/id"
+_MERIDIAN_CHOWN_BIN="/usr/sbin/chown"
+
+_meridian_require_entrypoint_tools() {
+  local tool
+  for tool in \
+    "$_MERIDIAN_READLINK_BIN" \
+    "$_MERIDIAN_DIRNAME_BIN" \
+    "$_MERIDIAN_CAT_BIN" \
+    "$_MERIDIAN_TR_BIN" \
+    "$_MERIDIAN_HOSTNAME_BIN" \
+    "$_MERIDIAN_DATE_BIN" \
+    "$_MERIDIAN_ID_BIN" \
+    "$_MERIDIAN_CHOWN_BIN"; do
+    if [ ! -x "$tool" ]; then
+      printf '[FATAL] Utilidad requerida no disponible: %s\n' "$tool" >&2
+      exit 1
+    fi
+  done
+}
+
+_meridian_require_entrypoint_tools
+
 # Resolver el entrypoint físico antes de calcular MERIDIAN_ROOT. Cuando Meridian
 # está instalado, /usr/local/bin/meridian es un symlink al payload real; usar
 # dirname "$0" directamente haría que el runtime buscara VERSION/core bajo
 # /usr/local/bin y terminara silenciosamente bajo set -e/pipefail.
 _MERIDIAN_ENTRY="$0"
 while [ -L "$_MERIDIAN_ENTRY" ]; do
-  _MERIDIAN_LINK="$(/usr/bin/readlink "$_MERIDIAN_ENTRY")" || {
+  _MERIDIAN_LINK="$("$_MERIDIAN_READLINK_BIN" "$_MERIDIAN_ENTRY")" || {
     printf '%s\n' "[FATAL] No se pudo resolver el symlink de Meridian: $_MERIDIAN_ENTRY" >&2
     exit 1
   }
   case "$_MERIDIAN_LINK" in
     /*) _MERIDIAN_ENTRY="$_MERIDIAN_LINK" ;;
-    *)  _MERIDIAN_ENTRY="$(cd "$(dirname "$_MERIDIAN_ENTRY")" && pwd)/$_MERIDIAN_LINK" ;;
+    *)  _MERIDIAN_ENTRY="$(cd "$("$_MERIDIAN_DIRNAME_BIN" "$_MERIDIAN_ENTRY")" && pwd)/$_MERIDIAN_LINK" ;;
   esac
 done
-MERIDIAN_ROOT="$(cd "$(dirname "$_MERIDIAN_ENTRY")" && pwd)"
+MERIDIAN_ROOT="$(cd "$("$_MERIDIAN_DIRNAME_BIN" "$_MERIDIAN_ENTRY")" && pwd)"
 unset _MERIDIAN_ENTRY _MERIDIAN_LINK
 export MERIDIAN_ROOT
 
-MERIDIAN_VERSION="$(cat "${MERIDIAN_ROOT}/VERSION" 2>/dev/null | tr -d '[:space:]')"
+MERIDIAN_VERSION="$("$_MERIDIAN_CAT_BIN" "${MERIDIAN_ROOT}/VERSION" 2>/dev/null | "$_MERIDIAN_TR_BIN" -d '[:space:]')"
 export MERIDIAN_VERSION
 
 MERIDIAN_ORG="Apple Platform Team"
@@ -71,7 +105,7 @@ _load_core() {
   for f in "${core_files[@]}"; do
     path="${MERIDIAN_ROOT}/${f}"
     if [ ! -f "$path" ]; then
-      echo "[FATAL] Componente no encontrado: $path" >&2
+      printf '%s\n' "[FATAL] Componente no encontrado: $path" >&2
       exit 1
     fi
     # shellcheck source=/dev/null
@@ -92,25 +126,25 @@ _parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --module)
-        [ $# -ge 2 ] || { echo "[ERROR] --module requiere un ID de módulo" >&2; return 2; }
-        [ -z "$_OPT_CATEGORY" ] || { echo "[ERROR] --module y --category no se pueden combinar" >&2; return 2; }
-        [ "$_OPT_ALL" = "false" ] || { echo "[ERROR] --module y --all no se pueden combinar" >&2; return 2; }
+        [ $# -ge 2 ] || { printf '%s\n' "[ERROR] --module requiere un ID de módulo" >&2; return 2; }
+        [ -z "$_OPT_CATEGORY" ] || { printf '%s\n' "[ERROR] --module y --category no se pueden combinar" >&2; return 2; }
+        [ "$_OPT_ALL" = "false" ] || { printf '%s\n' "[ERROR] --module y --all no se pueden combinar" >&2; return 2; }
         _OPT_INTERACTIVE=false
         _OPT_MODULES+=("$2")
         shift 2
         ;;
       --category)
-        [ $# -ge 2 ] || { echo "[ERROR] --category requiere una categoría" >&2; return 2; }
-        [ ${#_OPT_MODULES[@]} -eq 0 ] || { echo "[ERROR] --category y --module no se pueden combinar" >&2; return 2; }
-        [ -z "$_OPT_CATEGORY" ] || { echo "[ERROR] --category solo puede especificarse una vez" >&2; return 2; }
-        [ "$_OPT_ALL" = "false" ] || { echo "[ERROR] --category y --all no se pueden combinar" >&2; return 2; }
+        [ $# -ge 2 ] || { printf '%s\n' "[ERROR] --category requiere una categoría" >&2; return 2; }
+        [ ${#_OPT_MODULES[@]} -eq 0 ] || { printf '%s\n' "[ERROR] --category y --module no se pueden combinar" >&2; return 2; }
+        [ -z "$_OPT_CATEGORY" ] || { printf '%s\n' "[ERROR] --category solo puede especificarse una vez" >&2; return 2; }
+        [ "$_OPT_ALL" = "false" ] || { printf '%s\n' "[ERROR] --category y --all no se pueden combinar" >&2; return 2; }
         _OPT_INTERACTIVE=false
         _OPT_CATEGORY="$2"
         shift 2
         ;;
       --all)
         [ ${#_OPT_MODULES[@]} -eq 0 ] && [ -z "$_OPT_CATEGORY" ] || {
-          echo "[ERROR] --all no se puede combinar con --module o --category" >&2
+          printf '%s\n' "[ERROR] --all no se puede combinar con --module o --category" >&2
           return 2
         }
         _OPT_ALL=true
@@ -135,10 +169,10 @@ _parse_args() {
         ;;
       --)
         shift
-        [ $# -eq 0 ] || { echo "[ERROR] No se aceptan argumentos posicionales" >&2; return 2; }
+        [ $# -eq 0 ] || { printf '%s\n' "[ERROR] No se aceptan argumentos posicionales" >&2; return 2; }
         ;;
       *)
-        echo "[ERROR] Argumento desconocido: $1" >&2
+        printf '%s\n' "[ERROR] Argumento desconocido: $1" >&2
         return 2
         ;;
     esac
@@ -146,7 +180,7 @@ _parse_args() {
 }
 
 _show_help() {
-  cat <<HELP
+  "$_MERIDIAN_CAT_BIN" <<HELP
 
 Meridian v${MERIDIAN_VERSION} — ${MERIDIAN_ORG}
 
@@ -205,7 +239,11 @@ _get_real_home() {
   fi
 
   local home_dir
-  home_dir="$(dscacheutil -q user -a name "$user_name" 2>/dev/null | awk '/^dir: / {print $2; exit}')"
+  if [ ! -x "$_MERIDIAN_DSCACHEUTIL_BIN" ] || [ ! -x "$_MERIDIAN_AWK_BIN" ]; then
+    printf '%s\n' "/tmp"
+    return 0
+  fi
+  home_dir="$("$_MERIDIAN_DSCACHEUTIL_BIN" -q user -a name "$user_name" 2>/dev/null | "$_MERIDIAN_AWK_BIN" '/^dir: / {print $2; exit}')"
   if [ -n "$home_dir" ] && [ -d "$home_dir" ]; then
     printf '%s\n' "$home_dir"
   elif [ -d "/Users/${user_name}" ]; then
@@ -236,8 +274,8 @@ _get_output_base() {
 _build_output_dir() {
   local output_base hostname ts
   output_base="$(_get_output_base)"
-  hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
-  ts="$(date '+%Y%m%d_%H%M%S')"
+  hostname="$("$_MERIDIAN_HOSTNAME_BIN" -s 2>/dev/null || printf '%s' 'unknown')"
+  ts="$("$_MERIDIAN_DATE_BIN" '+%Y%m%d_%H%M%S')"
   printf '%s\n' "${output_base}/Meridian_${hostname}_${ts}"
 }
 
@@ -250,14 +288,14 @@ _finalize_user_output_ownership() {
   [ -d "$output_dir" ] || return 0
 
   local user_group
-  user_group="$(id -gn "$user_name" 2>/dev/null || printf '%s' staff)"
+  user_group="$("$_MERIDIAN_ID_BIN" -gn "$user_name" 2>/dev/null || printf '%s' staff)"
 
-  if ! chown -R "${user_name}:${user_group}" "$output_dir" 2>/dev/null; then
+  if ! "$_MERIDIAN_CHOWN_BIN" -R "${user_name}:${user_group}" "$output_dir" 2>/dev/null; then
     log_warn "meridian" "No se pudo transferir ownership de la salida a ${user_name}"
   fi
 
   if [ -n "$zip_path" ] && [ -f "$zip_path" ]; then
-    chown "${user_name}:${user_group}" "$zip_path" 2>/dev/null || \
+    "$_MERIDIAN_CHOWN_BIN" "${user_name}:${user_group}" "$zip_path" 2>/dev/null || \
       log_warn "meridian" "No se pudo transferir ownership del ZIP a ${user_name}"
   fi
 }
@@ -369,7 +407,7 @@ main() {
     json_path="$(reporting_service_get_json_path)"
 
     local zip_name output_base archive_path
-    zip_name="Meridian_$(hostname -s 2>/dev/null || echo unknown)_$(date '+%Y%m%d_%H%M%S').zip"
+    zip_name="Meridian_$("$_MERIDIAN_HOSTNAME_BIN" -s 2>/dev/null || printf '%s' unknown)_$("$_MERIDIAN_DATE_BIN" '+%Y%m%d_%H%M%S').zip"
     output_base="$(_get_output_base)"
     zip_path="${output_base}/${zip_name}"
 
