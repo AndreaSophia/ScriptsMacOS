@@ -235,6 +235,26 @@ find "$INSTALL_ROOT" -type d -exec chmod 755 {} \;
 find "$INSTALL_ROOT" -type f -exec chmod 644 {} \;
 chmod 755 "${INSTALL_ROOT}/meridian" || exit 1
 
+# `find -exec chmod` expresa el resultado como predicado y no garantiza que el
+# exit status de `find` refleje un chmod rechazado. Verificamos el estado final
+# para que Installer no informe éxito con permisos parcialmente normalizados.
+bad_dirs="$(find "$INSTALL_ROOT" -type d ! -perm 755 -print)" || {
+  echo "[Meridian] no se pudo verificar permisos de directorios" >&2
+  exit 1
+}
+[ -z "$bad_dirs" ] || {
+  echo "[Meridian] directorios con permisos inesperados tras normalización" >&2
+  exit 1
+}
+bad_files="$(find "$INSTALL_ROOT" -type f ! -path "${INSTALL_ROOT}/meridian" ! -perm 644 -print)" || {
+  echo "[Meridian] no se pudo verificar permisos de archivos" >&2
+  exit 1
+}
+[ -z "$bad_files" ] || {
+  echo "[Meridian] archivos con permisos inesperados tras normalización" >&2
+  exit 1
+}
+
 mkdir -p "/Library/Logs/Meridian" || exit 1
 chown root:admin "/Library/Logs/Meridian"
 chmod 750 "/Library/Logs/Meridian" || exit 1
