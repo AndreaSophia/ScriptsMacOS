@@ -1,12 +1,13 @@
 #!/bin/bash
 # =============================================================================
 # Módulo: secure_token — diagnose.sh
-# Responsabilidad: inventariar administradores locales humanos y consultar
-# Secure Token sin modificar el sistema.
+# Responsabilidad: validar la política corporativa de Secure Token sin modificar
+# el sistema. Cuentas requeridas: usuario productivo actual + LCLAdmin + AdminCMDB.
 # =============================================================================
 
 _DSCL="/usr/bin/dscl"
 _SYSADMINCTL="/usr/sbin/sysadminctl"
+_STAT="/usr/bin/stat"
 
 if [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
   [ -x "$_DSCL" ] || {
@@ -35,7 +36,31 @@ if [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
     RESULT_EXIT_CODE="1"
     return 0
   }
+  [ -x "$_STAT" ] || {
+    RESULT_STATUS="ERROR"
+    RESULT_SEVERITY="HIGH"
+    RESULT_TITLE="stat no disponible"
+    RESULT_DESCRIPTION="No se puede identificar de forma confiable al usuario productivo actual."
+    RESULT_EXPLANATION="Meridian requiere /usr/bin/stat para identificar el propietario de /dev/console."
+    RESULT_RISK="La política de Secure Token no puede evaluarse completamente."
+    RESULT_SUGGESTED_ACTION="Verificar la integridad de /usr/bin/stat."
+    RESULT_REPAIRABLE="false"
+    RESULT_REPAIR_RISK="NONE"
+    RESULT_EXIT_CODE="1"
+    return 0
+  }
 fi
+
+# La identidad productiva cambia entre equipos. En producción se toma del
+# usuario de consola; en regresiones puede fijarse explícitamente sin depender
+# del host donde corre el test.
+policy_current_user="${MERIDIAN_POLICY_CURRENT_USER:-}"
+if [ -z "$policy_current_user" ] && [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
+  policy_current_user="$("$_STAT" -f '%Su' /dev/console 2>/dev/null)"
+fi
+case "$policy_current_user" in
+  ""|root|loginwindow|_mbsetupuser) policy_current_user="" ;;
+esac
 
 admins=""
 raw=""
@@ -54,8 +79,8 @@ else
   esac
 
   for user in $admin_members; do
-    # Excluir cuentas de sistema; el objetivo es inventariar administradores
-    # humanos/locales que realmente participan en flujos de Secure Token.
+    # Las cuentas de sistema no son objetivo de esta política. Las cuentas
+    # técnicas con prefijo '_' tampoco deben convertirse en falsos incumplimientos.
     case "$user" in
       root|daemon|nobody|_*) continue ;;
     esac
@@ -91,7 +116,7 @@ if [ -z "$admins" ]; then
   RESULT_SEVERITY="HIGH"
   RESULT_TITLE="No se pudieron inventariar administradores locales"
   RESULT_DESCRIPTION="No se obtuvo una lista confiable de administradores locales humanos."
-  RESULT_EXPLANATION="Sin una cuenta administradora local observable no es posible evaluar Secure Token de forma útil."
+  RESULT_EXPLANATION="Sin cuentas administradoras locales observables no es posible evaluar la política de Secure Token."
   RESULT_RISK="Estado de identidad local y capacidad de desbloqueo FileVault indeterminados."
   RESULT_SUGGESTED_ACTION="Revisar /Groups/admin y las cuentas locales del equipo."
   RESULT_REPAIRABLE="false"
@@ -100,52 +125,99 @@ if [ -z "$admins" ]; then
   return 0
 fi
 
+if [ -z "$policy_current_user" ]; then
+  RESULT_STATUS="ERROR"
+  RESULT_SEVERITY="HIGH"
+  RESULT_TITLE="Usuario productivo actual no identificable"
+  RESULT_DESCRIPTION="Meridian no pudo determinar qué usuario productivo debe cumplir la política de Secure Token."
+  RESULT_EXPLANATION="La política exige Secure Token para el usuario productivo actual, LCLAdmin y AdminCMDB."
+  RESULT_RISK="No es posible declarar cumplimiento completo de Secure Token."
+  RESULT_SUGGESTED_ACTION="Ejecutar Meridian con una sesión productiva iniciada o validar la identidad de consola."
+  RESULT_REPAIRABLE="false"
+  RESULT_REPAIR_RISK="NONE"
+  RESULT_EXIT_CODE="1"
+  return 0
+fi
+
 total=0
-enabled=0
-disabled=0
-unknown=0
 evidence=""
+policy_current_state="MISSING"
+policy_current_uid="?"
+policy_lcl_state="MISSING"
+policy_lcl_uid="?"
+policy_cmdb_state="MISSING"
+policy_cmdb_uid="?"
 
 while IFS='|' read -r user uid token_state; do
   [ -n "$user" ] || continue
   total=$((total + 1))
-  case "$token_state" in
-    ENABLED) enabled=$((enabled + 1)) ;;
-    DISABLED) disabled=$((disabled + 1)) ;;
-    *) unknown=$((unknown + 1)) ;;
-  esac
-  evidence="${evidence}${user} (UID ${uid}): Secure Token ${token_state}"$'\n'
+
+  required="false"
+  if [ "$user" = "$policy_current_user" ]; then
+    policy_current_state="$token_state"
+    policy_current_uid="$uid"
+    required="true"
+  fi
+  if [ "$user" = "LCLAdmin" ]; then
+    policy_lcl_state="$token_state"
+    policy_lcl_uid="$uid"
+    required="true"
+  fi
+  if [ "$user" = "AdminCMDB" ]; then
+    policy_cmdb_state="$token_state"
+    policy_cmdb_uid="$uid"
+    required="true"
+  fi
+
+  if [ "$required" = "true" ]; then
+    evidence="${evidence}[REQUIRED] ${user} (UID ${uid}): Secure Token ${token_state}"$'\n'
+  else
+    evidence="${evidence}[INVENTORY] ${user} (UID ${uid}): Secure Token ${token_state}"$'\n'
+  fi
 done <<EOF
 $admins
 EOF
+
+# Si una cuenta requerida no apareció en el inventario, dejarlo explícito en la
+# evidencia: ausencia y token deshabilitado son fallos diferentes, pero ambos
+# impiden cumplir la política.
+[ "$policy_current_state" != "MISSING" ] || evidence="${evidence}[REQUIRED] ${policy_current_user}: cuenta no observada en admin (MISSING)"$'\n'
+[ "$policy_lcl_state" != "MISSING" ] || evidence="${evidence}[REQUIRED] LCLAdmin: cuenta no observada en admin (MISSING)"$'\n'
+[ "$policy_cmdb_state" != "MISSING" ] || evidence="${evidence}[REQUIRED] AdminCMDB: cuenta no observada en admin (MISSING)"$'\n'
 
 RESULT_EVIDENCE="${evidence%$'\n'}"
 RESULT_REPAIRABLE="false"
 RESULT_REPAIR_RISK="NONE"
 RESULT_EXIT_CODE="0"
 
-if [ "$enabled" -eq 0 ]; then
+policy_failures=0
+policy_unknown=0
+for state in "$policy_current_state" "$policy_lcl_state" "$policy_cmdb_state"; do
+  case "$state" in
+    ENABLED) ;;
+    UNKNOWN) policy_failures=$((policy_failures + 1)); policy_unknown=$((policy_unknown + 1)) ;;
+    *) policy_failures=$((policy_failures + 1)) ;;
+  esac
+done
+
+if [ "$policy_failures" -gt 0 ]; then
   RESULT_STATUS="FAIL"
   RESULT_SEVERITY="HIGH"
-  RESULT_TITLE="Ningún administrador local tiene Secure Token"
-  RESULT_DESCRIPTION="Se detectaron ${total} administradores locales humanos y ninguno reporta Secure Token habilitado."
-  RESULT_EXPLANATION="Secure Token participa en flujos de FileVault y, según la plataforma, en Bootstrap Token y volume ownership."
-  RESULT_RISK="Puede existir pérdida de capacidad administrativa sobre FileVault o flujos de identidad/propiedad del volumen."
-  RESULT_SUGGESTED_ACTION="Revisar el flujo de aprovisionamiento y qué administrador debe poseer Secure Token; no otorgarlo automáticamente sin validar la política."
-elif [ "$disabled" -gt 0 ] || [ "$unknown" -gt 0 ]; then
-  RESULT_STATUS="WARN"
-  RESULT_SEVERITY="MEDIUM"
-  RESULT_TITLE="Administradores con estado Secure Token inconsistente"
-  RESULT_DESCRIPTION="Administradores: ${total}; token habilitado: ${enabled}; deshabilitado: ${disabled}; desconocido: ${unknown}."
-  RESULT_EXPLANATION="No todos los administradores locales observados tienen un estado Secure Token confirmado como habilitado."
-  RESULT_RISK="Algunas cuentas administrativas podrían no participar correctamente en flujos de FileVault o administración de Secure Token."
-  RESULT_SUGGESTED_ACTION="Revisar RESULT_EVIDENCE y confirmar qué administradores requieren Secure Token según el diseño de identidad del equipo."
+  RESULT_TITLE="Política Secure Token incumplida"
+  RESULT_DESCRIPTION="Las 3 cuentas requeridas deben tener Secure Token habilitado: ${policy_current_user}, LCLAdmin y AdminCMDB. Se detectaron ${policy_failures} incumplimiento(s)."
+  RESULT_EXPLANATION="La política operativa exige Secure Token para el usuario productivo y las dos cuentas administrativas de soporte/CMDB; otras cuentas técnicas no forman parte de esta evaluación."
+  RESULT_RISK="Una cuenta requerida sin Secure Token puede perder capacidad esperada en flujos de FileVault, desbloqueo preboot o administración criptográfica del equipo."
+  if [ "$policy_unknown" -gt 0 ]; then
+    RESULT_SUGGESTED_ACTION="Revisar RESULT_EVIDENCE y corregir las cuentas requeridas con estado DISABLED/MISSING; validar manualmente cualquier estado UNKNOWN. No otorgar tokens fuera de estas cuentas por inferencia."
+  else
+    RESULT_SUGGESTED_ACTION="Revisar RESULT_EVIDENCE y restablecer Secure Token únicamente en las cuentas requeridas que estén DISABLED o MISSING, siguiendo el procedimiento corporativo autorizado."
+  fi
 else
   RESULT_STATUS="PASS"
   RESULT_SEVERITY="INFO"
-  RESULT_TITLE="Secure Token consistente en administradores locales"
-  RESULT_DESCRIPTION="Los ${total} administradores locales humanos detectados tienen Secure Token habilitado."
-  RESULT_EXPLANATION="El inventario local no muestra administradores humanos sin Secure Token."
+  RESULT_TITLE="Política Secure Token cumplida"
+  RESULT_DESCRIPTION="Usuario productivo actual, LCLAdmin y AdminCMDB tienen Secure Token habilitado."
+  RESULT_EXPLANATION="Las tres identidades requeridas por la política operativa reportan Secure Token ENABLED."
   RESULT_RISK="N/A"
   RESULT_SUGGESTED_ACTION="N/A"
 fi
