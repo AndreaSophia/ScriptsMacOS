@@ -26,19 +26,43 @@ fi
 
 _stats=""
 _stats_rc=127
+_stats_attempts=0
 if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ] && [ -n "${MERIDIAN_FIXTURE_DIR:-}" ]; then
   if [ -f "${MERIDIAN_FIXTURE_DIR}/falconctl_not_found.txt" ]; then
     _stats="$(cat "${MERIDIAN_FIXTURE_DIR}/falconctl_not_found.txt" 2>/dev/null || true)"
     _stats_rc=127
     _falconctl=""
+  elif [ -f "${MERIDIAN_FIXTURE_DIR}/falconctl_retry_running.txt" ]; then
+    # Fixture específico para la regresión del fallo transitorio observado en
+    # corporativo: primera consulta rc=1, segundo intento rc=0 + estado válido.
+    _stats_attempts=1
+    _stats="$(cat "${MERIDIAN_FIXTURE_DIR}/falconctl_first_error.txt" 2>/dev/null || true)"
+    _stats_rc=1
+    [ -n "$_falconctl" ] || _falconctl="fixture:falconctl"
+    _stats_attempts=2
+    _stats="$(cat "${MERIDIAN_FIXTURE_DIR}/falconctl_retry_running.txt" 2>/dev/null || true)"
+    _stats_rc=0
   elif [ -f "${MERIDIAN_FIXTURE_DIR}/falconctl_running.txt" ]; then
+    _stats_attempts=1
     _stats="$(cat "${MERIDIAN_FIXTURE_DIR}/falconctl_running.txt" 2>/dev/null || true)"
     _stats_rc=0
     [ -n "$_falconctl" ] || _falconctl="fixture:falconctl"
   fi
 elif [ -n "$_falconctl" ]; then
+  _stats_attempts=1
   _stats="$("$_falconctl" stats 2>/dev/null)"
   _stats_rc=$?
+
+  # En el Mac corporativo se observó un rc=1 aislado seguido, minutos después,
+  # de una ejecución manual exitosa con salida operativa. Un único fallo de
+  # observación no es evidencia suficiente para degradar el sensor. Reintentamos
+  # una sola vez y mantenemos fail-closed si el segundo intento también falla.
+  if [ "$_stats_rc" -ne 0 ]; then
+    sleep 1
+    _stats_attempts=2
+    _stats="$("$_falconctl" stats 2>/dev/null)"
+    _stats_rc=$?
+  fi
 fi
 
 _app_found=false
@@ -56,6 +80,7 @@ _systemext="$(systemextensionsctl list 2>/dev/null | grep -iE 'crowdstrike|falco
   echo
   echo "## falconctl path: ${_falconctl:-No encontrado}"
   echo "## falconctl stats rc: ${_stats_rc}"
+  echo "## falconctl stats attempts: ${_stats_attempts}"
   echo
   echo "## falconctl stats:"
   echo "${_stats:-N/A}"
@@ -72,7 +97,7 @@ _systemext="$(systemextensionsctl list 2>/dev/null | grep -iE 'crowdstrike|falco
   launchctl list 2>/dev/null | grep -iE 'crowdstrike|falcon' || echo "Ninguno"
 } > "$_evidence_file" 2>/dev/null
 
-RESULT_RAW_OUTPUT="falconctl=${_falconctl:-none} stats_rc=${_stats_rc} app=${_app_found} process=${_process_found} stats=${_stats:-empty}"
+RESULT_RAW_OUTPUT="falconctl=${_falconctl:-none} stats_rc=${_stats_rc} stats_attempts=${_stats_attempts} app=${_app_found} process=${_process_found} stats=${_stats:-empty}"
 
 if [ "$_stats_rc" -eq 0 ] && [ -n "$_stats" ]; then
   if printf '%s\n' "$_stats" | grep -qiE 'operational.*true|State=connected|Sensor operational|Running'; then
@@ -121,7 +146,7 @@ if [ -n "$_falconctl" ] && [ "$_stats_rc" -ne 0 ]; then
   RESULT_STATUS="ERROR"
   RESULT_SEVERITY="HIGH"
   RESULT_TITLE="CrowdStrike Falcon instalado — consulta falconctl falló"
-  RESULT_DESCRIPTION="Se encontró falconctl, pero el comando stats terminó con rc=${_stats_rc}."
+  RESULT_DESCRIPTION="Se encontró falconctl, pero el comando stats terminó con rc=${_stats_rc} tras ${_stats_attempts} intento(s)."
   RESULT_EXPLANATION="Un fallo de observación no demuestra que el sensor esté detenido."
   RESULT_RISK="Estado de protección no verificable desde Meridian."
   RESULT_SUGGESTED_ACTION="Revisar permisos, versión del sensor y consola Falcon antes de concluir incumplimiento."
