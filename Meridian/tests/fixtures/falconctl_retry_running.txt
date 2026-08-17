@@ -1,0 +1,10 @@
+=== CloudInfo ===
+Cloud Info
+Host: fixture.cloudsink.net
+Port: 443
+State: connected
+
+=== agent_info ===
+version: 7.39.21104.0
+Sensor operational: true
+Sensor status: loaded
