@@ -135,8 +135,18 @@ _prepare_payload() {
 set -u
 
 COMMAND_PATH="/usr/local/bin/meridian"
+EXPECTED_COMMAND_TARGET="/usr/local/lib/meridian/meridian"
 
-if [ -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
+if [ -L "$COMMAND_PATH" ]; then
+  current_target="$(readlink "$COMMAND_PATH" 2>/dev/null)" || {
+    echo "[Meridian] no se pudo resolver el enlace existente: $COMMAND_PATH" >&2
+    exit 1
+  }
+  if [ "$current_target" != "$EXPECTED_COMMAND_TARGET" ]; then
+    echo "[Meridian] $COMMAND_PATH apunta a un destino ajeno; no se sobrescribe" >&2
+    exit 1
+  fi
+elif [ -e "$COMMAND_PATH" ]; then
   echo "[Meridian] $COMMAND_PATH existe y no es un enlace; no se sobrescribe" >&2
   exit 1
 fi
@@ -151,6 +161,7 @@ set -u
 
 INSTALL_ROOT="/usr/local/lib/meridian"
 COMMAND_PATH="/usr/local/bin/meridian"
+EXPECTED_COMMAND_TARGET="${INSTALL_ROOT}/meridian"
 MANIFEST_NAME=".meridian-payload-manifest"
 MANIFEST_PATH="${INSTALL_ROOT}/${MANIFEST_NAME}"
 CURRENT_LIST=""
@@ -203,7 +214,16 @@ done < "$CURRENT_LIST"
 find "$INSTALL_ROOT" -depth -type d ! -path "$INSTALL_ROOT" -exec rmdir {} \; 2>/dev/null || true
 
 mkdir -p "/usr/local/bin" || exit 1
-if [ -e "$COMMAND_PATH" ] && [ ! -L "$COMMAND_PATH" ]; then
+if [ -L "$COMMAND_PATH" ]; then
+  current_target="$(readlink "$COMMAND_PATH" 2>/dev/null)" || {
+    echo "[Meridian] no se pudo resolver el enlace existente: $COMMAND_PATH" >&2
+    exit 1
+  }
+  if [ "$current_target" != "$EXPECTED_COMMAND_TARGET" ]; then
+    echo "[Meridian] $COMMAND_PATH apunta a un destino ajeno; no se sobrescribe" >&2
+    exit 1
+  fi
+elif [ -e "$COMMAND_PATH" ]; then
   echo "[Meridian] $COMMAND_PATH existe y no es un enlace; no se sobrescribe" >&2
   exit 1
 fi
