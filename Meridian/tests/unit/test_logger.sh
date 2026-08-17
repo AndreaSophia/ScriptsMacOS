@@ -83,6 +83,12 @@ if logger_init "$session_log" >/dev/null 2>&1; then
 else
   assert_eq "session log: destino nuevo se inicializa" "created" "failed"
 fi
+
+# La sesión puede contener evidencia sensible. En macOS, stat -f %Lp devuelve
+# los bits POSIX sin adornos; el logger debe dejar el archivo exactamente 0600.
+session_mode="$(/usr/bin/stat -f '%Lp' "$session_log" 2>/dev/null || true)"
+assert_eq "session log: permisos finales son 600" "600" "$session_mode"
+
 printf '%s\n' 'preserve-me' >> "$session_log"
 
 if logger_init "$session_log" >/dev/null 2>&1; then
