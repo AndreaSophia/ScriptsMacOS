@@ -167,7 +167,7 @@ logger_init() {
   [ -n "$log_path" ] || return 1
   log_dir="$(dirname "$log_path")"
 
-  # diagnostic.log pertenece a una sesión nueva. Nunca truncamos un objeto que
+  # diagnostic.log es un artefacto de sesión nuevo. Nunca truncamos un objeto que
   # ya exista ni seguimos un symlink preparado previamente. Esto vuelve explícita
   # la frontera de ownership del logger y evita convertir una ruta de sesión
   # reutilizada en una primitiva de clobber privilegiado.
@@ -201,6 +201,13 @@ logger_init() {
     return 1
   }
 
-  chmod 600 "${MERIDIAN_LOG_FILE}" 2>/dev/null || true
+  if ! chmod 600 "${MERIDIAN_LOG_FILE}" 2>/dev/null; then
+    printf "  ${_L_RED}✗${_L_RST}  [logger] No se pudieron asegurar permisos 600 en: %s\n" \
+      "$log_path" >&2
+    rm -f "${MERIDIAN_LOG_FILE}" 2>/dev/null || true
+    MERIDIAN_LOG_FILE=""
+    export MERIDIAN_LOG_FILE
+    return 1
+  fi
   return 0
 }
