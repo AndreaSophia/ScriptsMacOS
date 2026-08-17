@@ -74,6 +74,8 @@ _check_requirements() {
     exit 1
   }
 
+  # Mantener una sola fuente de verdad: VERSION puede ser X.Y.Z o
+  # X.Y.Z-etiqueta, pero la porción que llega a Installer debe ser X.Y.Z.
   printf '%s\n' "$MERIDIAN_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9._-]*)?$' || {
     echo "[ERROR] VERSION inválida: '${MERIDIAN_VERSION}' (esperado X.Y.Z o X.Y.Z-etiqueta)" >&2
     exit 1
@@ -89,6 +91,10 @@ _check_requirements() {
 _write_payload_manifest() {
   local install_root="${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}"
   local manifest="${install_root}/${PAYLOAD_MANIFEST_NAME}"
+
+  # El manifiesto enumera archivos regulares y symlinks relativos al install root.
+  # Se genera al final para que postinstall pueda retirar residuos de versiones
+  # anteriores sin borrar primero una instalación funcional.
   (
     cd "$install_root" || exit 1
     find . \( -type f -o -type l \) ! -name "$PAYLOAD_MANIFEST_NAME" -print | \
@@ -114,12 +120,16 @@ _prepare_payload() {
     fi
   done
 
+  # Normalizar permisos del payload. No heredamos bits de escritura/ejecución
+  # accidentales del checkout que generó el paquete.
   find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type d -exec chmod 755 {} \;
   find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type f -exec chmod 644 {} \;
   chmod 755 "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
 
   _write_payload_manifest
 
+  # preinstall NO borra la versión existente. Un fallo posterior de Installer no
+  # debe convertir un upgrade fallido en una desinstalación accidental.
   cat > "${PKG_SCRIPTS_DIR}/preinstall" <<'PREINSTALL'
 #!/bin/bash
 set -u
@@ -165,7 +175,10 @@ trap _cleanup_tmp EXIT
 
 case "$INSTALL_ROOT" in
   /usr/local/lib/meridian) ;;
-  *) echo "[Meridian] ruta de instalación inesperada" >&2; exit 1 ;;
+  *)
+    echo "[Meridian] ruta de instalación inesperada" >&2
+    exit 1
+    ;;
 esac
 
 if [ ! -x "${INSTALL_ROOT}/meridian" ]; then
@@ -220,11 +233,11 @@ ln -s "${INSTALL_ROOT}/meridian" "$COMMAND_PATH" || exit 1
 chown -R root:wheel "$INSTALL_ROOT"
 find "$INSTALL_ROOT" -type d -exec chmod 755 {} \;
 find "$INSTALL_ROOT" -type f -exec chmod 644 {} \;
-chmod 755 "${INSTALL_ROOT}/meridian"
+chmod 755 "${INSTALL_ROOT}/meridian" || exit 1
 
-mkdir -p "/Library/Logs/Meridian"
+mkdir -p "/Library/Logs/Meridian" || exit 1
 chown root:admin "/Library/Logs/Meridian"
-chmod 750 "/Library/Logs/Meridian"
+chmod 750 "/Library/Logs/Meridian" || exit 1
 
 exit 0
 POSTINSTALL
@@ -267,6 +280,8 @@ _build_product_pkg() {
 </installer-gui-script>
 XML
 
+  # Fail closed: no producir un paquete si la Distribution pierde por accidente
+  # la declaración universal que evita requerir Rosetta en Apple Silicon.
   grep -Fq "hostArchitectures=\"${PKG_HOST_ARCHITECTURES}\"" "$dist_xml" || {
     echo "[ERROR] Distribution.xml no declara las arquitecturas esperadas: ${PKG_HOST_ARCHITECTURES}" >&2
     exit 1
@@ -276,9 +291,16 @@ XML
   rm -f "$output_pkg"
 
   if [ -n "$SIGN_IDENTITY" ]; then
-    productbuild --distribution "$dist_xml" --package-path "$BUILD_DIR" --sign "$SIGN_IDENTITY" "$output_pkg"
+    productbuild \
+      --distribution "$dist_xml" \
+      --package-path "$BUILD_DIR" \
+      --sign "$SIGN_IDENTITY" \
+      "$output_pkg"
   else
-    productbuild --distribution "$dist_xml" --package-path "$BUILD_DIR" "$output_pkg"
+    productbuild \
+      --distribution "$dist_xml" \
+      --package-path "$BUILD_DIR" \
+      "$output_pkg"
     echo "[WARN]  PKG no firmado. Firmar antes de distribución productiva."
   fi
 
