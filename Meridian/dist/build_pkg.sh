@@ -57,7 +57,7 @@ _parse_args() {
 
 _check_requirements() {
   echo "[CHECK] Verificando requisitos..."
-  for tool in pkgbuild productbuild xattr; do
+  for tool in pkgbuild productbuild ditto; do
     command -v "$tool" >/dev/null 2>&1 || {
       echo "[ERROR] '$tool' no encontrado. Instala Command Line Tools: xcode-select --install" >&2
       exit 1
@@ -111,24 +111,21 @@ _prepare_payload() {
   mkdir -p "${PAYLOAD_DIR}/usr/local/bin"
   mkdir -p "$PKG_SCRIPTS_DIR"
 
-  # Evita que copyfile materialice resource forks/metadata lateralmente durante cp.
-  COPYFILE_DISABLE=1 cp "${PROJECT_ROOT}/meridian" "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
-  COPYFILE_DISABLE=1 cp "${PROJECT_ROOT}/VERSION"  "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/VERSION"
+  # Construimos el payload sin resource forks, extended attributes ni ACLs.
+  # Algunos xattrs de macOS (por ejemplo com.apple.macl) pueden sobrevivir a
+  # xattr -cr; ditto --norsrc evita heredarlos desde la copia inicial.
+  /usr/bin/ditto --norsrc "${PROJECT_ROOT}/meridian" \
+    "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
+  /usr/bin/ditto --norsrc "${PROJECT_ROOT}/VERSION" \
+    "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/VERSION"
 
   for dir in config modules rules core services reporting logging ui contracts; do
     if [ -d "${PROJECT_ROOT}/${dir}" ]; then
-      COPYFILE_DISABLE=1 cp -R "${PROJECT_ROOT}/${dir}" "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/"
+      mkdir -p "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/${dir}"
+      /usr/bin/ditto --norsrc "${PROJECT_ROOT}/${dir}" \
+        "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/${dir}"
     fi
   done
-
-  # `pkgbuild` puede serializar extended attributes/resource forks del payload
-  # como entradas AppleDouble `._*`, aunque no existan archivos `._*` visibles.
-  # Meridian no necesita xattrs en su payload, así que los retiramos antes de
-  # empaquetar para producir un artefacto reproducible y limpio.
-  /usr/bin/xattr -cr "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" || {
-    echo "[ERROR] No se pudieron limpiar extended attributes del payload" >&2
-    exit 1
-  }
 
   # Defensa en profundidad: elimina metadata Finder/AppleDouble que pudiera
   # existir ya como archivo regular en el checkout de origen.
@@ -141,10 +138,6 @@ _prepare_payload() {
   chmod 755 "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/meridian"
 
   _write_payload_manifest
-
-  # El manifiesto se crea después de limpiar xattrs; aseguremos que tampoco
-  # herede metadata del filesystem del host.
-  /usr/bin/xattr -c "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/${PAYLOAD_MANIFEST_NAME}" 2>/dev/null || true
 
   # preinstall NO borra la versión existente. Un fallo posterior de Installer no
   # debe convertir un upgrade fallido en una desinstalación accidental.
