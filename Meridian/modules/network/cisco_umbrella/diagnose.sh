@@ -9,7 +9,6 @@
 _evidence_file="${MERIDIAN_EVIDENCE_DIR}/cisco_umbrella_detail.txt"
 
 _UMBRELLA_LEGACY_APP="/Applications/Cisco Umbrella Roaming Security.app"
-_UMBRELLA_LEGACY_AGENT_ID="com.cisco.umbrella.agent"
 _UMBRELLA_LEGACY_LAUNCHDAEMON="/Library/LaunchDaemons/com.cisco.umbrella.agent.plist"
 _CSC_APP="/Applications/Cisco/Cisco Secure Client.app"
 _CSC_UMBRELLA_DIRS=(
@@ -21,44 +20,73 @@ _CSC_SYSTEM_EXTENSION_ID="com.cisco.anyconnect.macos.acsockext"
 _UMBRELLA_DNS_IPS="208.67.222.222 208.67.220.220 208.67.222.123"
 
 _secure_client_found=false
-[ -d "$_CSC_APP" ] && _secure_client_found=true
-
 _umbrella_module_found=false
-for _dir in "${_CSC_UMBRELLA_DIRS[@]}"; do
-  [ -d "$_dir" ] && _umbrella_module_found=true && break
-done
-
 _legacy_found=false
-[ -d "$_UMBRELLA_LEGACY_APP" ] && _legacy_found=true
-[ -f "$_UMBRELLA_LEGACY_LAUNCHDAEMON" ] && _legacy_found=true
+_socket_filter_found=false
+_launchd_output=""
+_systemext_output=""
+_dns_output=""
+_proc_output=""
+
+_fixture_true() {
+  local file="$1"
+  local value=""
+  [ -f "$file" ] || return 1
+  value="$(cat "$file" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  case "$value" in
+    1|true|yes|si|sí|present|installed|active) return 0 ;;
+  esac
+  return 1
+}
 
 if [ "${MERIDIAN_TEST_MODE:-0}" = "1" ] && [ -n "${MERIDIAN_FIXTURE_DIR:-}" ]; then
+  # El sandbox debe depender exclusivamente de fixtures explícitos. No se
+  # consultan aplicaciones, procesos, DNS ni extensiones del Mac anfitrión.
+  _fixture_true "${MERIDIAN_FIXTURE_DIR}/umbrella_secure_client.txt" && _secure_client_found=true
+  _fixture_true "${MERIDIAN_FIXTURE_DIR}/umbrella_module.txt" && _umbrella_module_found=true
+  _fixture_true "${MERIDIAN_FIXTURE_DIR}/umbrella_legacy.txt" && _legacy_found=true
+  _fixture_true "${MERIDIAN_FIXTURE_DIR}/umbrella_socket_filter.txt" && _socket_filter_found=true
+
   _launchd_output="$(cat "${MERIDIAN_FIXTURE_DIR}/umbrella_running.txt" 2>/dev/null || echo "")"
   _systemext_output="$(cat "${MERIDIAN_FIXTURE_DIR}/umbrella_systemextension.txt" 2>/dev/null || echo "")"
+  _dns_output="$(cat "${MERIDIAN_FIXTURE_DIR}/umbrella_dns.txt" 2>/dev/null || echo "")"
+  _proc_output="$(cat "${MERIDIAN_FIXTURE_DIR}/umbrella_processes.txt" 2>/dev/null || echo "")"
 else
+  [ -d "$_CSC_APP" ] && _secure_client_found=true
+
+  for _dir in "${_CSC_UMBRELLA_DIRS[@]}"; do
+    [ -d "$_dir" ] && _umbrella_module_found=true && break
+  done
+
+  [ -d "$_UMBRELLA_LEGACY_APP" ] && _legacy_found=true
+  [ -f "$_UMBRELLA_LEGACY_LAUNCHDAEMON" ] && _legacy_found=true
+  [ -d "$_CSC_SOCKET_FILTER" ] && _socket_filter_found=true
+
   _launchd_output="$(launchctl list 2>/dev/null | grep -iE 'com\.cisco\.(umbrella|secureclient)' || true)"
   _systemext_output="$(systemextensionsctl list 2>/dev/null | grep -iE "${_CSC_SYSTEM_EXTENSION_ID}|cisco.*secure.*client|umbrella" || true)"
+  _dns_output="$(scutil --dns 2>/dev/null || true)"
+  _proc_output="$(ps aux 2>/dev/null | grep -iE '[u]mbrella|[c]isco.*secure.*client|[a]csock' || true)"
 fi
 
-_dns_output="$(scutil --dns 2>/dev/null || true)"
 _umbrella_dns=false
 for _dns_ip in $_UMBRELLA_DNS_IPS; do
   printf '%s\n' "$_dns_output" | grep -Fq "$_dns_ip" && { _umbrella_dns=true; break; }
 done
 
 _agent_running=false
-if printf '%s\n%s\n' "$_launchd_output" "$_systemext_output" | grep -qiE 'umbrella|secureclient|acsockext'; then
+if printf '%s\n%s\n%s\n' "$_launchd_output" "$_systemext_output" "$_proc_output" | grep -qiE 'umbrella|secureclient|acsockext|cisco.*secure.*client'; then
   _agent_running=true
 fi
 
 {
   echo "# Cisco Umbrella — estado"
   echo "# Generado: $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "# Fuente: $([ "${MERIDIAN_TEST_MODE:-0}" = "1" ] && echo 'fixtures simulados' || echo 'sistema real')"
   echo
   echo "## Cisco Secure Client: $([ "$_secure_client_found" = true ] && echo 'Sí' || echo 'No')"
   echo "## Módulo Umbrella: $([ "$_umbrella_module_found" = true ] && echo 'Presente' || echo 'No detectado')"
   echo "## Cliente legacy: $([ "$_legacy_found" = true ] && echo 'Presente' || echo 'No')"
-  echo "## Socket Filter: $([ -d "$_CSC_SOCKET_FILTER" ] && echo 'Presente' || echo 'No detectado')"
+  echo "## Socket Filter: $([ "$_socket_filter_found" = true ] && echo 'Presente' || echo 'No detectado')"
   echo
   echo "## launchctl (Cisco):"
   echo "${_launchd_output:-Ninguno}"
@@ -70,7 +98,7 @@ fi
   printf '%s\n' "$_dns_output" | grep -i 'nameserver' | head -10 || true
   echo
   echo "## Procesos Cisco/Umbrella:"
-  ps aux 2>/dev/null | grep -iE '[u]mbrella|[c]isco.*secure.*client|[a]csock' || echo "Ninguno"
+  echo "${_proc_output:-Ninguno}"
 } > "$_evidence_file" 2>/dev/null
 
 RESULT_RAW_OUTPUT="secure_client=${_secure_client_found} umbrella_module=${_umbrella_module_found} legacy=${_legacy_found} active=${_agent_running} umbrella_dns=${_umbrella_dns}"
