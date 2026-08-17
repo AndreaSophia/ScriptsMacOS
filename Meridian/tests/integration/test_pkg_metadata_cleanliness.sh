@@ -37,7 +37,9 @@ else
 fi
 
 assert_contains 'COPYFILE_DISABLE=1 cp' \
-  "copias del payload deshabilitan AppleDouble de macOS"
+  "copias del payload deshabilitan metadata lateral de macOS"
+assert_contains '/usr/bin/xattr -cr "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}"' \
+  "payload elimina extended attributes antes de pkgbuild"
 assert_contains "-name '._*'" \
   "payload elimina defensivamente archivos AppleDouble"
 assert_contains "-name '.DS_Store'" \
