@@ -57,7 +57,7 @@ _parse_args() {
 
 _check_requirements() {
   echo "[CHECK] Verificando requisitos..."
-  for tool in pkgbuild productbuild ditto; do
+  for tool in pkgbuild productbuild ditto xattr; do
     command -v "$tool" >/dev/null 2>&1 || {
       echo "[ERROR] '$tool' no encontrado. Instala Command Line Tools: xcode-select --install" >&2
       exit 1
@@ -127,8 +127,16 @@ _prepare_payload() {
     fi
   done
 
+  # pkgbuild puede materializar xattrs del payload como archivos AppleDouble,
+  # incluso cuando ditto --norsrc evitó copiarlos desde el origen. Limpiamos el
+  # árbol ya ensamblado y luego retiramos cualquier sidecar que haya aparecido.
+  /usr/bin/xattr -cr "$PAYLOAD_DIR" || {
+    echo "[ERROR] No se pudieron limpiar atributos extendidos del payload" >&2
+    exit 1
+  }
+
   # Defensa en profundidad: elimina metadata Finder/AppleDouble que pudiera
-  # existir ya como archivo regular en el checkout de origen.
+  # existir ya como archivo regular en el checkout de origen o crear xattr.
   find "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}" -type f \( -name '._*' -o -name '.DS_Store' \) -exec rm -f {} \;
 
   # Normalizar permisos del payload. No heredamos bits de escritura/ejecución
@@ -279,8 +287,12 @@ POSTINSTALL
 
 _build_component_pkg() {
   echo "[BUILD] Construyendo componente PKG..."
-  pkgbuild \
+  # COPYFILE_DISABLE impide que copyfile(3) serialice xattrs residuales como
+  # sidecars AppleDouble dentro del archive del componente.
+  COPYFILE_DISABLE=1 pkgbuild \
     --root "${PAYLOAD_DIR}" \
+    --filter '(^|/)\._' \
+    --filter '(^|/)\.DS_Store$' \
     --identifier "${PKG_IDENTIFIER}" \
     --version "${PKG_VERSION}" \
     --install-location "/" \
@@ -322,13 +334,13 @@ XML
   rm -f "$output_pkg"
 
   if [ -n "$SIGN_IDENTITY" ]; then
-    productbuild \
+    COPYFILE_DISABLE=1 productbuild \
       --distribution "$dist_xml" \
       --package-path "$BUILD_DIR" \
       --sign "$SIGN_IDENTITY" \
       "$output_pkg"
   else
-    productbuild \
+    COPYFILE_DISABLE=1 productbuild \
       --distribution "$dist_xml" \
       --package-path "$BUILD_DIR" \
       "$output_pkg"

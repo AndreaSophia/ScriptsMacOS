@@ -38,6 +38,12 @@ fi
 
 assert_contains '/usr/bin/ditto --norsrc' \
   "payload se copia sin resource forks/xattrs/ACLs"
+assert_contains '/usr/bin/xattr -cr "$PAYLOAD_DIR"' \
+  "payload ensamblado limpia atributos antes de pkgbuild"
+assert_contains 'COPYFILE_DISABLE=1 pkgbuild' \
+  "pkgbuild no serializa xattrs como AppleDouble"
+assert_contains "--filter '(^|/)\\._'" \
+  "pkgbuild filtra entradas AppleDouble"
 assert_contains "-name '._*'" \
   "payload elimina defensivamente archivos AppleDouble"
 assert_contains "-name '.DS_Store'" \
