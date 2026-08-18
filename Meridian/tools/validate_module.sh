@@ -191,6 +191,7 @@ printf "\n  \033[1marchivos requeridos\033[0m\n"
 repairable="$(_manifest_value repairable)"
 case "$repairable" in
   true)
+    [ -f "${module_dir}/precheck.sh" ] && _pass "precheck.sh presente" || _fail "precheck.sh FALTANTE (repairable=true)"
     [ -f "${module_dir}/repair.sh" ] && _pass "repair.sh presente" || _fail "repair.sh FALTANTE (repairable=true)"
     [ -f "${module_dir}/validate.sh" ] && _pass "validate.sh presente" || _fail "validate.sh FALTANTE (repairable=true)"
     ;;
@@ -207,9 +208,12 @@ esac
 if [ -f "${module_dir}/repair.sh" ] && [ ! -f "${module_dir}/validate.sh" ]; then
   _fail "validate.sh FALTANTE: IModule lo exige cuando existe repair.sh"
 fi
+if [ -f "${module_dir}/repair.sh" ] && [ ! -f "${module_dir}/precheck.sh" ]; then
+  _fail "precheck.sh FALTANTE: IModule lo exige cuando existe repair.sh"
+fi
 
 printf "\n  \033[1msintaxis bash\033[0m\n"
-for script in diagnose.sh repair.sh validate.sh; do
+for script in diagnose.sh precheck.sh repair.sh validate.sh rollback.sh; do
   if [ -f "${module_dir}/${script}" ]; then
     if bash -n "${module_dir}/${script}" 2>/dev/null; then
       _pass "${script}: sintaxis OK"

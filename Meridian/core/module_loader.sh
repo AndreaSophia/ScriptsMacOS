@@ -186,6 +186,10 @@ _manifest_validate() {
   fi
 
   if [ "$repairable" = "true" ]; then
+    if [ ! -f "${module_dir}/precheck.sh" ]; then
+      log_warn "module_loader" "Módulo '$id': repairable=true pero falta precheck.sh"
+      errors=$((errors + 1))
+    fi
     if [ ! -f "${module_dir}/repair.sh" ]; then
       log_warn "module_loader" "Módulo '$id': manifest dice repairable=true pero falta repair.sh"
       errors=$((errors + 1))
@@ -205,6 +209,10 @@ _manifest_validate() {
   # de cómo haya sido declarado el manifest.
   if [ -f "${module_dir}/repair.sh" ] && [ ! -f "${module_dir}/validate.sh" ]; then
     log_warn "module_loader" "Módulo '$id': repair.sh presente pero falta validate.sh"
+    errors=$((errors + 1))
+  fi
+  if [ -f "${module_dir}/repair.sh" ] && [ ! -f "${module_dir}/precheck.sh" ]; then
+    log_warn "module_loader" "Módulo '$id': repair.sh presente pero falta precheck.sh"
     errors=$((errors + 1))
   fi
 

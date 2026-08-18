@@ -14,6 +14,12 @@ AUDIT_LOG="${TEST_ROOT}/audit.txt"
 mkdir -p "$MODULE_DIR" "$HOSTILE_BIN" || exit 1
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
+cat >"${MODULE_DIR}/precheck.sh" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod +x "${MODULE_DIR}/precheck.sh" || exit 1
+
 cat >"${MODULE_DIR}/repair.sh" <<EOF
 #!/bin/bash
 printf '%s\n' ran >"${REPAIR_MARKER}"
