@@ -49,20 +49,15 @@ printf "\n\033[1mtest_rule_engine.sh\033[0m\n\n"
 rule_loader_load "${MERIDIAN_ROOT}/rules/definitions" 2>/dev/null
 count="$(rule_loader_count)"
 
-if [ "$count" -gt 0 ]; then
-  printf "  \033[1;32m✓\033[0m  Reglas cargadas: %s\n" "$count"
-  _pass=$((_pass+1))
-else
-  printf "  \033[1;31m✗\033[0m  No se cargaron reglas\n" >&2
-  _fail=$((_fail+1))
-fi
+# Baseline actual: 2 compliance + 4 network/EDR + 4 security = 10 reglas.
+assert_eq "rule_loader: carga las 10 reglas actuales" "10" "$count"
 
 # --- Test: regla filevault_disabled se activa cuando status=FAIL ---
 result_init
 RESULT_MODULE_ID="filevault"
 RESULT_MODULE_VERSION="1.0.0"
 RESULT_STATUS="FAIL"
-RESULT_SEVERITY="INFO"        # El módulo puede devolver INFO, la regla debe sobrescribir
+RESULT_SEVERITY="INFO"
 RESULT_TITLE="FileVault deshabilitado"
 RESULT_DESCRIPTION="FileVault is Off."
 RESULT_EXPLANATION="default"
@@ -77,8 +72,8 @@ RESULT_RAW_OUTPUT="FileVault is Off."
 rule_engine_evaluate "filevault" 2>/dev/null
 
 assert_eq "rule: filevault_disabled activa severity=CRITICAL" "CRITICAL" "$RESULT_SEVERITY"
-assert_not_empty "rule: filevault_disabled setea explanation"     "$RESULT_EXPLANATION"
-assert_not_empty "rule: filevault_disabled setea risk"            "$RESULT_RISK"
+assert_not_empty "rule: filevault_disabled setea explanation"      "$RESULT_EXPLANATION"
+assert_not_empty "rule: filevault_disabled setea risk"             "$RESULT_RISK"
 assert_not_empty "rule: filevault_disabled setea suggested_action" "$RESULT_SUGGESTED_ACTION"
 assert_eq "rule: filevault_disabled setea rule_triggered" \
   "filevault_disabled" "$RESULT_RULE_TRIGGERED"
@@ -126,17 +121,30 @@ rule_engine_evaluate "crowdstrike" 2>/dev/null
 
 assert_eq "rule: crowdstrike_not_installed no activa en PASS" "" "$RESULT_RULE_TRIGGERED"
 
-# --- Test: rule_loader rechaza bloque inválido (sin rule_id) ---
-# Crear archivo de regla inválida temporal
-tmp_rules="$(mktemp)"
-printf 'condition_module: filevault\ncondition_field: status\n---\n' > "$tmp_rules"
-rule_loader_load "$(dirname "$tmp_rules")" 2>/dev/null
-# No debe crashear — esto es solo un smoke test de robustez
-printf "  \033[1;32m✓\033[0m  rule_loader: no crashea con bloque inválido\n"
-_pass=$((_pass+1))
-rm -f "$tmp_rules"
+# --- Test: rule_loader rechaza realmente un bloque inválido ---
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/meridian_rules.XXXXXX")"
+tmp_rules="${tmp_dir}/invalid.rules.yaml"
+printf 'condition_module: filevault\ncondition_field: status\ncondition_operator: equals\ncondition_value: FAIL\nresult_severity: HIGH\n---\n' > "$tmp_rules"
+rule_loader_load "$tmp_dir" 2>/dev/null
+assert_eq "rule_loader: bloque sin rule_id no se incorpora" "0" "$(rule_loader_count)"
 
-# --- Resumen ---
+printf 'rule_id: invalid_operator\ncondition_module: filevault\ncondition_field: status\ncondition_operator: execute\ncondition_value: FAIL\nresult_severity: HIGH\nresult_repairable: false\nresult_repair_risk: NONE\n---\n' > "$tmp_rules"
+rule_loader_load "$tmp_dir" 2>/dev/null
+assert_eq "rule_loader: operador desconocido se rechaza" "0" "$(rule_loader_count)"
+
+printf 'rule_id: invalid_repair_contract\ncondition_module: filevault\ncondition_field: status\ncondition_operator: equals\ncondition_value: FAIL\nresult_severity: HIGH\nresult_repairable: false\nresult_repair_risk: MEDIUM\n---\n' > "$tmp_rules"
+rule_loader_load "$tmp_dir" 2>/dev/null
+assert_eq "rule_loader: repair contract incoherente se rechaza" "0" "$(rule_loader_count)"
+
+printf 'rule_id: empty_value_operator\ncondition_module: filevault\ncondition_field: evidence\ncondition_operator: is_empty\nresult_severity: MEDIUM\nresult_repairable: false\nresult_repair_risk: NONE\n---\n' > "$tmp_rules"
+rule_loader_load "$tmp_dir" 2>/dev/null
+assert_eq "rule_loader: is_empty acepta condition_value omitido" "1" "$(rule_loader_count)"
+rm -rf "$tmp_dir"
+
+# --- Re-cargar reglas reales para verificar que load() reemplaza estado previo ---
+rule_loader_load "${MERIDIAN_ROOT}/rules/definitions" 2>/dev/null
+assert_eq "rule_loader: recarga limpia las 10 reglas actuales" "10" "$(rule_loader_count)"
+
 printf "\n  ─────────────────────────────────────\n"
 printf "  Pasaron: %s | Fallaron: %s\n" "$_pass" "$_fail"
 printf "  ─────────────────────────────────────\n\n"

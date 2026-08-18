@@ -1,105 +1,171 @@
 #!/bin/bash
 # =============================================================================
 # Meridian — core/module_registry.sh
-# Responsabilidad: registro en memoria de módulos cargados y disponibles.
-# Es la única fuente de verdad sobre qué módulos están listos para ejecutarse.
-#
-# Los módulos se almacenan como líneas en _REGISTRY (variable global).
-# Formato de cada entrada: id|||name|||category|||version|||criticality|||path|||requires_root|||timeout
+# Registro en memoria de módulos cargados.
+# Compatible con Bash 3.2/macOS; el framing se interpreta con builtins del shell
+# para no depender de utilidades resueltas mediante PATH en el core.
 # =============================================================================
 
 _REGISTRY=""
 _REGISTRY_COUNT=0
 
-# =============================================================================
-# registry_add <id> <name> <category> <version> <criticality> <path> <requires_root> <timeout>
-# Registra un módulo en el registry
-# =============================================================================
 registry_add() {
-  local id="$1"
-  local name="$2"
-  local category="$3"
-  local version="$4"
-  local criticality="$5"
-  local path="$6"
-  local requires_root="$7"
-  local timeout="$8"
+  local id="$1" name="$2" category="$3" version="$4"
+  local criticality="$5" path="$6" requires_root="$7" timeout="$8"
+  local dependencies="${9:-}" value
 
-  # Verificar que no existe un duplicado
+  # El registry usa ||| como framing interno. Ningún campo puede contener el
+  # delimitador físico ni saltos de línea; aceptar esos valores corrompería las
+  # columnas o crearía registros fantasma. Las dependencias viajan como CSV de
+  # IDs snake_case y por eso las comas sí son válidas únicamente en ese campo.
+  for value in "$id" "$name" "$category" "$version" "$criticality" "$path" "$requires_root" "$timeout" "$dependencies"; do
+    case "$value" in
+      *'|'*|*$'\n'*|*$'\r'*)
+        log_error "registry" "Campo de módulo contiene caracteres no seguros para el registry: $id"
+        return 1
+        ;;
+    esac
+  done
+
   if registry_exists "$id"; then
     log_warn "registry" "Módulo duplicado ignorado: $id"
     return 1
   fi
 
-  local entry="${id}|||${name}|||${category}|||${version}|||${criticality}|||${path}|||${requires_root}|||${timeout}"
-  _REGISTRY="${_REGISTRY}${entry}\n"
-  _REGISTRY_COUNT=$(( _REGISTRY_COUNT + 1 ))
+  local entry="${id}|||${name}|||${category}|||${version}|||${criticality}|||${path}|||${requires_root}|||${timeout}|||${dependencies}"
+  if [ -n "$_REGISTRY" ]; then
+    _REGISTRY="${_REGISTRY}"$'\n'"${entry}"
+  else
+    _REGISTRY="$entry"
+  fi
+  _REGISTRY_COUNT=$((_REGISTRY_COUNT + 1))
 
   log_debug "registry" "Registrado: ${id} (${category}) v${version}"
   return 0
 }
 
-# =============================================================================
-# registry_exists <id> — Retorna 0 si el módulo está registrado
-# =============================================================================
+# Extrae un campo lógico (1..9) de una línea del registry usando únicamente
+# parameter expansion de Bash 3.2. El core puede correr privilegiado y no debe
+# resolver `cut` (ni ninguna otra utilidad de parsing) desde un PATH heredado.
+_registry_field_from_line() {
+  local line="$1" target="$2" current=1 value
+
+  case "$target" in
+    1|2|3|4|5|6|7|8|9) ;;
+    *) return 1 ;;
+  esac
+
+  value="$line"
+  while [ "$current" -lt "$target" ]; do
+    case "$value" in
+      *'|||'*) value="${value#*|||}" ;;
+      *) return 1 ;;
+    esac
+    current=$((current + 1))
+  done
+
+  if [ "$target" -lt 9 ]; then
+    case "$value" in
+      *'|||'*) printf '%s\n' "${value%%|||*}" ;;
+      *) return 1 ;;
+    esac
+  else
+    # El noveno campo es el resto de la línea y puede estar vacío.
+    case "$value" in
+      *'|||'*) return 1 ;;
+      *) printf '%s\n' "$value" ;;
+    esac
+  fi
+}
+
 registry_exists() {
-  local id="$1"
-  printf "%b" "$_REGISTRY" | grep -q "^${id}|||"
+  local id="$1" line current_id
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    current_id="$(_registry_field_from_line "$line" 1)" || return 1
+    [ "$current_id" = "$id" ] && return 0
+  done <<EOF
+$_REGISTRY
+EOF
+  return 1
 }
 
-# =============================================================================
-# registry_get_field <id> <field_number> — Extrae un campo de una entrada
-# Campos: 1=id 2=name 3=category 4=version 5=criticality 6=path 7=requires_root 8=timeout
-# =============================================================================
 registry_get_field() {
-  local id="$1"
-  local field="$2"
-  # El separador ||| se implementa como tres pipes consecutivos.
-  # awk -F no soporta ||| como literal — usamos sed para reemplazarlo
-  # por un separador no usado (SOH, ASCII 001) antes del split.
-  printf "%b" "$_REGISTRY" | grep "^${id}|||" | \
-    sed 's/|||/\x01/g' | awk -F'\x01' "{print \$${field}}" | head -1
+  local id="$1" field="$2" line current_id
+
+  case "$field" in
+    1|2|3|4|5|6|7|8|9) ;;
+    *) return 1 ;;
+  esac
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    current_id="$(_registry_field_from_line "$line" 1)" || return 1
+    if [ "$current_id" = "$id" ]; then
+      _registry_field_from_line "$line" "$field"
+      return $?
+    fi
+  done <<EOF
+$_REGISTRY
+EOF
+  return 1
 }
 
-# =============================================================================
-# registry_get_path <id> — Atajo para obtener la ruta del módulo
-# =============================================================================
 registry_get_path() {
   registry_get_field "$1" 6
 }
 
-# =============================================================================
-# registry_get_all_ids — Lista todos los IDs registrados, uno por línea
-# =============================================================================
+registry_get_dependencies() {
+  registry_get_field "$1" 9
+}
+
 registry_get_all_ids() {
-  printf "%b" "$_REGISTRY" | grep -v '^$' | \
-    sed 's/|||/\x01/g' | awk -F'\x01' '{print $1}'
+  local line id
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    id="$(_registry_field_from_line "$line" 1)" || return 1
+    printf '%s\n' "$id"
+  done <<EOF
+$_REGISTRY
+EOF
 }
 
-# =============================================================================
-# registry_get_by_category <category> — Lista IDs de una categoría
-# =============================================================================
 registry_get_by_category() {
-  local category="$1"
-  printf "%b" "$_REGISTRY" | grep -v '^$' | \
-    sed 's/|||/\x01/g' | awk -F'\x01' "\$3 == \"${category}\" {print \$1}"
+  local category="$1" line id current_category
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    id="$(_registry_field_from_line "$line" 1)" || return 1
+    current_category="$(_registry_field_from_line "$line" 3)" || return 1
+    [ "$current_category" = "$category" ] && printf '%s\n' "$id"
+  done <<EOF
+$_REGISTRY
+EOF
 }
 
-# =============================================================================
-# registry_count — Número de módulos registrados
-# =============================================================================
 registry_count() {
-  echo "$_REGISTRY_COUNT"
+  printf '%s\n' "$_REGISTRY_COUNT"
 }
 
-# =============================================================================
-# registry_print — Muestra el registry en formato tabular (para debug)
-# =============================================================================
+registry_reset() {
+  _REGISTRY=""
+  _REGISTRY_COUNT=0
+}
+
 registry_print() {
+  local line id category version criticality
   printf "\n  %-30s %-12s %-10s %-10s\n" "MÓDULO" "CATEGORÍA" "VERSIÓN" "CRITICIDAD"
-  printf "  %-30s %-12s %-10s %-10s\n" "$(printf '%0.s─' {1..30})" \
-    "$(printf '%0.s─' {1..12})" "$(printf '%0.s─' {1..10})" "$(printf '%0.s─' {1..10})"
-  printf "%b" "$_REGISTRY" | grep -v '^$' | \
-    awk -F'|||' '{printf "  %-30s %-12s %-10s %-10s\n", $1, $3, $4, $5}'
+  printf "  %-30s %-12s %-10s %-10s\n" "------------------------------" "------------" "----------" "----------"
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    id="$(_registry_field_from_line "$line" 1)" || return 1
+    category="$(_registry_field_from_line "$line" 3)" || return 1
+    version="$(_registry_field_from_line "$line" 4)" || return 1
+    criticality="$(_registry_field_from_line "$line" 5)" || return 1
+    printf "  %-30s %-12s %-10s %-10s\n" "$id" "$category" "$version" "$criticality"
+  done <<EOF
+$_REGISTRY
+EOF
+
   printf "\n"
 }

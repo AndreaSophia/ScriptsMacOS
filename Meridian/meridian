@@ -6,37 +6,78 @@
 #
 # Uso:
 #   sudo meridian [opciones]
-#
-# Opciones:
-#   --module <id>    Ejecutar un módulo específico
-#   --category <cat> Ejecutar todos los módulos de una categoría
-#   --all            Ejecutar todos los módulos (default)
-#   --test           Modo test con fixtures (sin llamadas al sistema real)
-#   --debug          Logs detallados
-#   --no-report      No generar reportes (solo mostrar en pantalla)
-#   --help           Mostrar esta ayuda
-#
-# Compatibilidad:
-#   macOS Sonoma (14) | Sequoia (15) | Tahoe (16)
-#   Apple Silicon (arm64) | Intel (x86_64) | bash 3.2+
 # =============================================================================
 
 set -euo pipefail
+# Los diagnósticos pueden contener inventario y evidencia sensible. No heredamos
+# un umask permisivo del shell, Workspace ONE o launchd.
+umask 027
 
-# --- Directorio raíz del proyecto ---
-MERIDIAN_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# El entrypoint puede ejecutarse como root desde sudo, Installer, launchd o MDM.
+# Las utilidades usadas antes y después del chequeo de privilegios se resuelven
+# mediante rutas canónicas de macOS para que PATH heredado no pueda sustituirlas.
+_MERIDIAN_READLINK_BIN="/usr/bin/readlink"
+_MERIDIAN_DIRNAME_BIN="/usr/bin/dirname"
+_MERIDIAN_CAT_BIN="/bin/cat"
+_MERIDIAN_TR_BIN="/usr/bin/tr"
+_MERIDIAN_DSCACHEUTIL_BIN="/usr/bin/dscacheutil"
+_MERIDIAN_AWK_BIN="/usr/bin/awk"
+_MERIDIAN_HOSTNAME_BIN="/bin/hostname"
+_MERIDIAN_DATE_BIN="/bin/date"
+_MERIDIAN_ID_BIN="/usr/bin/id"
+_MERIDIAN_CHOWN_BIN="/usr/sbin/chown"
+
+_meridian_require_entrypoint_tools() {
+  local tool
+  for tool in \
+    "$_MERIDIAN_READLINK_BIN" \
+    "$_MERIDIAN_DIRNAME_BIN" \
+    "$_MERIDIAN_CAT_BIN" \
+    "$_MERIDIAN_TR_BIN" \
+    "$_MERIDIAN_HOSTNAME_BIN" \
+    "$_MERIDIAN_DATE_BIN" \
+    "$_MERIDIAN_ID_BIN" \
+    "$_MERIDIAN_CHOWN_BIN"; do
+    if [ ! -x "$tool" ]; then
+      printf '[FATAL] Utilidad requerida no disponible: %s\n' "$tool" >&2
+      exit 1
+    fi
+  done
+}
+
+_meridian_require_entrypoint_tools
+
+# Resolver el entrypoint físico antes de calcular MERIDIAN_ROOT. Cuando Meridian
+# está instalado, /usr/local/bin/meridian es un symlink al payload real; usar
+# dirname "$0" directamente haría que el runtime buscara VERSION/core bajo
+# /usr/local/bin y terminara silenciosamente bajo set -e/pipefail.
+_MERIDIAN_ENTRY="$0"
+while [ -L "$_MERIDIAN_ENTRY" ]; do
+  _MERIDIAN_LINK="$("$_MERIDIAN_READLINK_BIN" "$_MERIDIAN_ENTRY")" || {
+    printf '%s\n' "[FATAL] No se pudo resolver el symlink de Meridian: $_MERIDIAN_ENTRY" >&2
+    exit 1
+  }
+  case "$_MERIDIAN_LINK" in
+    /*) _MERIDIAN_ENTRY="$_MERIDIAN_LINK" ;;
+    *)  _MERIDIAN_ENTRY="$(cd "$("$_MERIDIAN_DIRNAME_BIN" "$_MERIDIAN_ENTRY")" && pwd)/$_MERIDIAN_LINK" ;;
+  esac
+done
+MERIDIAN_ROOT="$(cd "$("$_MERIDIAN_DIRNAME_BIN" "$_MERIDIAN_ENTRY")" && pwd)"
+unset _MERIDIAN_ENTRY _MERIDIAN_LINK
 export MERIDIAN_ROOT
 
-# --- Versión ---
-MERIDIAN_VERSION="$(cat "${MERIDIAN_ROOT}/VERSION" 2>/dev/null | tr -d '[:space:]')"
+MERIDIAN_VERSION="$("$_MERIDIAN_CAT_BIN" "${MERIDIAN_ROOT}/VERSION" 2>/dev/null | "$_MERIDIAN_TR_BIN" -d '[:space:]')"
 export MERIDIAN_VERSION
 
 MERIDIAN_ORG="Apple Platform Team"
 export MERIDIAN_ORG
 
-# =============================================================================
-# _load_core — Carga todos los módulos del core en orden de dependencias
-# =============================================================================
+# Rutas de sesión registradas apenas se conocen. El trap EXIT las usa para
+# devolver ownership incluso si set -e termina la ejecución antes del cierre
+# normal (por ejemplo, durante init, selección, reporting o empaquetado).
+_SESSION_OUTPUT_DIR=""
+_SESSION_ZIP_PATH=""
+
 _load_core() {
   local core_files=(
     "logging/logger.sh"
@@ -54,16 +95,17 @@ _load_core() {
     "reporting/renderer_txt.sh"
     "reporting/renderer_json.sh"
     "services/reporting_service.sh"
+    "services/archive_service.sh"
     "ui/tui/menu.sh"
     "ui/tui/result_display.sh"
     "ui/tui/confirm_dialog.sh"
   )
 
-  local f
+  local f path
   for f in "${core_files[@]}"; do
-    local path="${MERIDIAN_ROOT}/${f}"
+    path="${MERIDIAN_ROOT}/${f}"
     if [ ! -f "$path" ]; then
-      echo "[FATAL] Componente no encontrado: $path" >&2
+      printf '%s\n' "[FATAL] Componente no encontrado: $path" >&2
       exit 1
     fi
     # shellcheck source=/dev/null
@@ -71,13 +113,11 @@ _load_core() {
   done
 }
 
-# =============================================================================
-# _parse_args — Procesa argumentos de línea de comandos
-# =============================================================================
 _parse_args() {
   _OPT_MODULES=()
   _OPT_CATEGORY=""
-  _OPT_ALL=true
+  _OPT_ALL=false
+  _OPT_INTERACTIVE=true
   _OPT_REPORT=true
   export MERIDIAN_DEBUG=0
   export MERIDIAN_TEST_MODE=0
@@ -86,17 +126,29 @@ _parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --module)
-        _OPT_ALL=false
-        _OPT_MODULES+=("${2:?'--module requiere un ID de módulo'}")
+        [ $# -ge 2 ] || { printf '%s\n' "[ERROR] --module requiere un ID de módulo" >&2; return 2; }
+        [ -z "$_OPT_CATEGORY" ] || { printf '%s\n' "[ERROR] --module y --category no se pueden combinar" >&2; return 2; }
+        [ "$_OPT_ALL" = "false" ] || { printf '%s\n' "[ERROR] --module y --all no se pueden combinar" >&2; return 2; }
+        _OPT_INTERACTIVE=false
+        _OPT_MODULES+=("$2")
         shift 2
         ;;
       --category)
-        _OPT_ALL=false
-        _OPT_CATEGORY="${2:?'--category requiere una categoría'}"
+        [ $# -ge 2 ] || { printf '%s\n' "[ERROR] --category requiere una categoría" >&2; return 2; }
+        [ ${#_OPT_MODULES[@]} -eq 0 ] || { printf '%s\n' "[ERROR] --category y --module no se pueden combinar" >&2; return 2; }
+        [ -z "$_OPT_CATEGORY" ] || { printf '%s\n' "[ERROR] --category solo puede especificarse una vez" >&2; return 2; }
+        [ "$_OPT_ALL" = "false" ] || { printf '%s\n' "[ERROR] --category y --all no se pueden combinar" >&2; return 2; }
+        _OPT_INTERACTIVE=false
+        _OPT_CATEGORY="$2"
         shift 2
         ;;
       --all)
+        [ ${#_OPT_MODULES[@]} -eq 0 ] && [ -z "$_OPT_CATEGORY" ] || {
+          printf '%s\n' "[ERROR] --all no se puede combinar con --module o --category" >&2
+          return 2
+        }
         _OPT_ALL=true
+        _OPT_INTERACTIVE=false
         shift
         ;;
       --test)
@@ -115,36 +167,43 @@ _parse_args() {
         _show_help
         exit 0
         ;;
-      *)
-        echo "[WARN] Argumento desconocido: $1" >&2
+      --)
         shift
+        [ $# -eq 0 ] || { printf '%s\n' "[ERROR] No se aceptan argumentos posicionales" >&2; return 2; }
+        ;;
+      *)
+        printf '%s\n' "[ERROR] Argumento desconocido: $1" >&2
+        return 2
         ;;
     esac
   done
 }
 
-# =============================================================================
-# _show_help
-# =============================================================================
 _show_help() {
-  cat <<HELP
+  "$_MERIDIAN_CAT_BIN" <<HELP
 
 Meridian v${MERIDIAN_VERSION} — ${MERIDIAN_ORG}
 
 USO:
   sudo meridian [opciones]
+  meridian --test [opciones]
 
 OPCIONES:
-  --module <id>    Ejecutar módulo específico (ej: filevault, crowdstrike)
+  --module <id>    Ejecutar módulo específico (se puede repetir)
   --category <cat> Ejecutar categoría (security, edr, mdm, network)
-  --all            Ejecutar todos los módulos (default)
-  --test           Modo test — usa fixtures sin llamar al sistema real
+  --all            Ejecutar todos los módulos sin menú interactivo
+  --test           Sandbox de fixtures; no requiere root ni consulta el sistema real
   --debug          Logs detallados
   --no-report      Solo pantalla, sin generar archivos de reporte
   --help           Esta ayuda
 
+COMPORTAMIENTO SIN SELECTOR:
+  Terminal interactivo   → muestra menú de módulos
+  Workspace ONE/SSH/MDM  → ejecuta todos los módulos sin esperar entrada
+
 MÓDULOS DISPONIBLES:
   filevault        FileVault Disk Encryption
+  secure_token     Secure Token & Local Administrators
   certificates     Certificates & Trust Store
   crowdstrike      CrowdStrike Falcon EDR
   cisco_umbrella   Cisco Umbrella DNS Security
@@ -153,151 +212,223 @@ MÓDULOS DISPONIBLES:
 
 EJEMPLOS:
   sudo meridian
+  sudo meridian --all
+  sudo meridian --module secure_token --no-report
   sudo meridian --module crowdstrike
+  sudo meridian --module filevault --module certificates
   sudo meridian --category security
-  sudo meridian --test --debug
+  meridian --all --test --debug
 
 SALIDA:
-  ~/Desktop/Meridian_<hostname>_<timestamp>/
-    Executive_Report.txt
-    results.json
-    diagnostic.log
-    evidencias/<module>/
+  Ejecución interactiva con sudo:
+    ~/Desktop/Meridian_<hostname>_<timestamp>/
+  Ejecución --test sin root:
+    ~/Desktop/Meridian_<hostname>_<timestamp>/ (o TMPDIR si Desktop no existe)
+  Ejecución headless/root (Workspace ONE/MDM):
+    /Library/Logs/Meridian/sessions/Meridian_<hostname>_<timestamp>/
 
 HELP
 }
 
-# =============================================================================
-# _build_output_dir — Construye la ruta de salida en el Desktop del usuario real
-# =============================================================================
-_build_output_dir() {
-  local real_home
-  if [ -n "${SUDO_USER:-}" ]; then
-    real_home="$(eval echo "~${SUDO_USER}" 2>/dev/null || echo "/tmp")"
-  else
-    real_home="$HOME"
+_get_real_home() {
+  local user_name="${SUDO_USER:-}"
+
+  if [ -z "$user_name" ]; then
+    printf '%s\n' "${HOME:-/tmp}"
+    return 0
   fi
 
-  local hostname
-  hostname="$(hostname -s 2>/dev/null || echo 'unknown')"
-  local ts
-  ts="$(date '+%Y%m%d_%H%M%S')"
-
-  echo "${real_home}/Desktop/Meridian_${hostname}_${ts}"
+  local home_dir
+  if [ ! -x "$_MERIDIAN_DSCACHEUTIL_BIN" ] || [ ! -x "$_MERIDIAN_AWK_BIN" ]; then
+    printf '%s\n' "/tmp"
+    return 0
+  fi
+  home_dir="$("$_MERIDIAN_DSCACHEUTIL_BIN" -q user -a name "$user_name" 2>/dev/null | "$_MERIDIAN_AWK_BIN" '/^dir: / {print $2; exit}')"
+  if [ -n "$home_dir" ] && [ -d "$home_dir" ]; then
+    printf '%s\n' "$home_dir"
+  elif [ -d "/Users/${user_name}" ]; then
+    printf '%s\n' "/Users/${user_name}"
+  else
+    printf '%s\n' "/tmp"
+  fi
 }
 
-# =============================================================================
-# _resolve_modules — Construye la lista final de módulos a ejecutar
-# =============================================================================
+_get_output_base() {
+  # Una sesión iniciada por una persona mediante sudo pertenece a ese usuario.
+  # Un sandbox --test sin root debe poder ejecutarse desde un checkout local sin
+  # escribir en /Library. Un job MDM/launchd ejecutado directamente como root
+  # usa una ubicación corporativa estable y restringida.
+  if [ -n "${SUDO_USER:-}" ]; then
+    printf '%s/Desktop\n' "$(_get_real_home)"
+  elif [ "${MERIDIAN_TEST_MODE:-0}" = "1" ] && ! privilege_check_root; then
+    if [ -n "${HOME:-}" ] && [ -d "${HOME}/Desktop" ]; then
+      printf '%s/Desktop\n' "$HOME"
+    else
+      printf '%s\n' "${TMPDIR:-/tmp}"
+    fi
+  else
+    printf '%s\n' "/Library/Logs/Meridian/sessions"
+  fi
+}
+
+_build_output_dir() {
+  local output_base hostname ts
+  output_base="$(_get_output_base)"
+  hostname="$("$_MERIDIAN_HOSTNAME_BIN" -s 2>/dev/null || printf '%s' 'unknown')"
+  ts="$("$_MERIDIAN_DATE_BIN" '+%Y%m%d_%H%M%S')"
+  printf '%s\n' "${output_base}/Meridian_${hostname}_${ts}"
+}
+
+_finalize_user_output_ownership() {
+  local output_dir="$1"
+  local zip_path="${2:-}"
+  local user_name="${SUDO_USER:-}"
+
+  [ -n "$user_name" ] || return 0
+  [ -d "$output_dir" ] || return 0
+
+  local user_group
+  user_group="$("$_MERIDIAN_ID_BIN" -gn "$user_name" 2>/dev/null || printf '%s' staff)"
+
+  if ! "$_MERIDIAN_CHOWN_BIN" -R "${user_name}:${user_group}" "$output_dir" 2>/dev/null; then
+    log_warn "meridian" "No se pudo transferir ownership de la salida a ${user_name}"
+  fi
+
+  if [ -n "$zip_path" ] && [ -f "$zip_path" ]; then
+    "$_MERIDIAN_CHOWN_BIN" "${user_name}:${user_group}" "$zip_path" 2>/dev/null || \
+      log_warn "meridian" "No se pudo transferir ownership del ZIP a ${user_name}"
+  fi
+}
+
+_finalize_session_artifacts() {
+  local rc=$?
+  # Evitar recursión si exit dentro del trap vuelve a disparar EXIT.
+  trap - EXIT
+
+  if [ -n "${_SESSION_OUTPUT_DIR:-}" ]; then
+    _finalize_user_output_ownership \
+      "$_SESSION_OUTPUT_DIR" "${_SESSION_ZIP_PATH:-}" || true
+  fi
+
+  exit "$rc"
+}
+
+trap _finalize_session_artifacts EXIT
+
 _resolve_modules() {
-  local result=()
+  local id
 
   if [ ${#_OPT_MODULES[@]} -gt 0 ]; then
-    result=("${_OPT_MODULES[@]}")
-  elif [ -n "$_OPT_CATEGORY" ]; then
-    while IFS= read -r id; do
-      [ -n "$id" ] && result+=("$id")
-    done < <(registry_get_by_category "$_OPT_CATEGORY")
-
-    if [ ${#result[@]} -eq 0 ]; then
-      log_warn "meridian" "No se encontraron módulos para la categoría: ${_OPT_CATEGORY}"
-    fi
+    for id in "${_OPT_MODULES[@]}"; do
+      printf '%s\n' "$id"
+    done
+    return 0
   fi
-  # Si result está vacío y _OPT_ALL=true, engine_run sin args ejecuta todos
 
-  echo "${result[@]:-}"
+  if [ -n "$_OPT_CATEGORY" ]; then
+    registry_get_by_category "$_OPT_CATEGORY"
+  fi
 }
 
-# =============================================================================
-# main
-# =============================================================================
+_validate_requested_modules() {
+  local id errors=0
+  for id in "$@"; do
+    if ! registry_exists "$id"; then
+      log_error "meridian" "Módulo solicitado no existe: $id"
+      errors=$((errors + 1))
+    fi
+  done
+  [ "$errors" -eq 0 ]
+}
+
 main() {
   _load_core
   _parse_args "$@"
 
-  # Verificar root antes de cualquier cosa
-  privilege_require_root
+  if [ "$_OPT_INTERACTIVE" = "true" ] && [ ! -t 0 ]; then
+    _OPT_INTERACTIVE=false
+    _OPT_ALL=true
+  fi
+
+  # La ejecución real mantiene el requisito de root. --test es un sandbox de
+  # fixtures y debe poder ejercitar el pipeline completo con mínimo privilegio.
+  if [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
+    privilege_require_root
+  fi
 
   local output_dir
   output_dir="$(_build_output_dir)"
+  _SESSION_OUTPUT_DIR="$output_dir"
 
-  # Mostrar banner
   tui_banner
+  diagnostic_service_init "$output_dir"
 
-  # Si es modo interactivo (sin args de módulo explícitos), mostrar menú
-  local selected_modules=()
-  if [ "$_OPT_ALL" = "true" ] && [ ${#_OPT_MODULES[@]} -eq 0 ] && \
-     [ -z "$_OPT_CATEGORY" ]; then
+  local selected_modules=() id menu_selection
 
-    # Necesitamos cargar módulos antes del menú para mostrar opciones
-    # Inicializar dirs y logger temporalmente
-    mkdir -p "$output_dir" 2>/dev/null
-    logger_init "${output_dir}/diagnostic.log"
-
-    module_loader_discover "${MERIDIAN_ROOT}/modules"
-    rule_loader_load "${MERIDIAN_ROOT}/rules/definitions"
-
-    local menu_selection
+  if [ "$_OPT_INTERACTIVE" = "true" ]; then
     menu_selection="$(tui_menu_main)"
 
-    if [ "$menu_selection" = "all" ] || [ -z "$menu_selection" ]; then
-      _OPT_ALL=true
-    else
-      _OPT_ALL=false
+    if [ "$menu_selection" != "all" ] && [ -n "$menu_selection" ]; then
       for id in $menu_selection; do
         selected_modules+=("$id")
       done
     fi
+  elif [ "$_OPT_ALL" = "false" ]; then
+    while IFS= read -r id; do
+      [ -n "$id" ] && selected_modules+=("$id")
+    done < <(_resolve_modules)
 
-    # Ejecutar directamente — el engine ya tiene módulos cargados
-    printf "\n"
-    log_step "Iniciando diagnóstico"
-
-    engine_run "${selected_modules[@]:-}"
-
-  else
-    # Modo no-interactivo: engine_init carga todo desde cero
-    diagnostic_service_run "$output_dir" "${_OPT_MODULES[@]:-}"
+    if [ -n "$_OPT_CATEGORY" ] && [ ${#selected_modules[@]} -eq 0 ]; then
+      log_error "meridian" "No se encontraron módulos para la categoría: ${_OPT_CATEGORY}"
+      return 2
+    fi
   fi
 
-  # Mostrar resultados en pantalla
-  local results
-  results="$(engine_get_results)"
-  tui_display_results "$results"
+  if [ ${#selected_modules[@]} -gt 0 ]; then
+    _validate_requested_modules "${selected_modules[@]}" || return 2
+    diagnostic_service_execute "${selected_modules[@]}"
+  else
+    diagnostic_service_execute
+  fi
 
-  local summary
-  summary="$(engine_get_summary)"
+  local results summary
+  results="$(diagnostic_service_get_results)"
+  summary="$(diagnostic_service_get_summary)"
+
+  tui_display_results "$results"
   tui_display_summary "$summary"
 
-  # Generar reportes
-  local txt_path="" json_path=""
+  local txt_path="" json_path="" zip_path=""
   if [ "$_OPT_REPORT" = "true" ]; then
-    txt_path="$(renderer_txt_generate "$output_dir" "$results" "$summary")"
-    json_path="$(renderer_json_generate "$output_dir" "$results" "$summary")"
-
-    # Crear ZIP
-    local zip_name="Meridian_$(hostname -s 2>/dev/null || echo unknown)_$(date '+%Y%m%d_%H%M%S').zip"
-    local real_home
-    if [ -n "${SUDO_USER:-}" ]; then
-      real_home="$(eval echo "~${SUDO_USER}" 2>/dev/null || echo "/tmp")"
-    else
-      real_home="$HOME"
+    if ! reporting_service_generate "$output_dir" txt json; then
+      log_warn "meridian" "La sesión completó con uno o más fallos de reporting"
     fi
-    local zip_path="${real_home}/Desktop/${zip_name}"
+    txt_path="$(reporting_service_get_txt_path)"
+    json_path="$(reporting_service_get_json_path)"
 
-    ( cd "$(dirname "$output_dir")" && \
-      zip -r "$zip_name" "$(basename "$output_dir")" >/dev/null 2>&1 && \
-      mv "$zip_name" "$zip_path" 2>/dev/null ) || true
+    local zip_name output_base archive_path
+    zip_name="Meridian_$("$_MERIDIAN_HOSTNAME_BIN" -s 2>/dev/null || printf '%s' unknown)_$("$_MERIDIAN_DATE_BIN" '+%Y%m%d_%H%M%S').zip"
+    output_base="$(_get_output_base)"
+    zip_path="${output_base}/${zip_name}"
+
+    if archive_path="$(archive_service_create "$output_dir" "$zip_path")"; then
+      zip_path="$archive_path"
+      _SESSION_ZIP_PATH="$zip_path"
+    else
+      zip_path=""
+      _SESSION_ZIP_PATH=""
+      log_warn "meridian" "No se pudo crear un ZIP nuevo y seguro para la sesión"
+    fi
 
     tui_display_output_paths "$output_dir" "$txt_path" "$json_path"
 
-    if [ -f "$zip_path" ]; then
+    if [ -n "$zip_path" ] && [ -f "$zip_path" ] && [ ! -L "$zip_path" ]; then
       printf "  \033[1;32mZIP listo   : %s\033[0m\n\n" "$zip_path"
     fi
   fi
 
   log_audit "meridian" "SESSION_COMPLETED" \
-    "modules=$(aggregator_count) pass=$(aggregator_count_by_status PASS) fail=$(aggregator_count_by_status FAIL)"
+    "modules=$(diagnostic_service_get_count) pass=$(diagnostic_service_get_count_by_status PASS) fail=$(diagnostic_service_get_count_by_status FAIL)"
 }
 
 main "$@"
