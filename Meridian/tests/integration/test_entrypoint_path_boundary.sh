@@ -8,6 +8,7 @@ _HOSTILE_DIR="${_TMP_ROOT}/hostile"
 _MARKER="${_TMP_ROOT}/hostile-invoked"
 _STDOUT="${_TMP_ROOT}/stdout"
 _STDERR="${_TMP_ROOT}/stderr"
+_EXPECTED_VERSION="$(/bin/cat "${MERIDIAN_ROOT}/VERSION" | /usr/bin/tr -d '[:space:]')"
 
 /bin/mkdir -p "$_HOSTILE_DIR" || exit 1
 trap '/bin/rm -rf "$_TMP_ROOT"' EXIT
@@ -35,7 +36,7 @@ fi
 _HELP=""
 [ -f "$_STDOUT" ] && _HELP="$(/bin/cat "$_STDOUT")"
 case "$_HELP" in
-  *"Meridian v1.0.0-mvp"*)
+  *"Meridian v${_EXPECTED_VERSION}"*)
     printf 'PASS: versión se resolvió sin depender de PATH\n'
     ;;
   *)
