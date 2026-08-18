@@ -8,6 +8,7 @@
 _DSCL="/usr/bin/dscl"
 _SYSADMINCTL="/usr/sbin/sysadminctl"
 _STAT="/usr/bin/stat"
+_EVIDENCE_FILE="${MERIDIAN_EVIDENCE_DIR:-}/secure_token_detail.txt"
 
 if [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
   [ -x "$_DSCL" ] || {
@@ -186,6 +187,23 @@ EOF
 [ "$policy_cmdb_state" != "MISSING" ] || evidence="${evidence}[REQUIRED] AdminCMDB: cuenta no observada en admin (MISSING)"$'\n'
 
 RESULT_EVIDENCE="${evidence%$'\n'}"
+
+# Materializar únicamente la evidencia normalizada de política. No se escribe
+# RESULT_RAW_OUTPUT ni la salida cruda de sysadminctl para evitar datos ajenos al
+# contrato del módulo. El contenido queda acotado al inventario local evaluado.
+if [ -n "${MERIDIAN_EVIDENCE_DIR:-}" ]; then
+  /bin/mkdir -p "$MERIDIAN_EVIDENCE_DIR" 2>/dev/null
+  if [ -d "$MERIDIAN_EVIDENCE_DIR" ]; then
+    {
+      printf '%s\n' '# Secure Token — evaluación de política'
+      printf '%s\n' '# Requeridas: usuario productivo actual + LCLAdmin + AdminCMDB'
+      printf '%s\n' '# Formato: [REQUIRED|INVENTORY] cuenta (UID): Secure Token ESTADO'
+      printf '%s\n' '# ---'
+      printf '%s\n' "$RESULT_EVIDENCE"
+    } > "$_EVIDENCE_FILE" 2>/dev/null
+  fi
+fi
+
 RESULT_REPAIRABLE="false"
 RESULT_REPAIR_RISK="NONE"
 RESULT_EXIT_CODE="0"
