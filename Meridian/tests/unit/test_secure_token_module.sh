@@ -29,6 +29,21 @@ assert_contains() {
     *) printf '✗  %s missing=%s\n' "$desc" "$needle" >&2; _fail=$((_fail + 1)) ;;
   esac
 }
+assert_not_contains() {
+  local desc="$1" haystack="$2" needle="$3"
+  case "$haystack" in
+    *"$needle"*) printf '✗  %s unexpected=%s\n' "$desc" "$needle" >&2; _fail=$((_fail + 1)) ;;
+    *) printf '✓  %s\n' "$desc"; _pass=$((_pass + 1)) ;;
+  esac
+}
+assert_file() {
+  local desc="$1" path="$2"
+  if [ -s "$path" ]; then
+    printf '✓  %s\n' "$desc"; _pass=$((_pass + 1))
+  else
+    printf '✗  %s missing_or_empty=%s\n' "$desc" "$path" >&2; _fail=$((_fail + 1))
+  fi
+}
 
 run_fixture() {
   local fixture_dir="$1"
@@ -38,6 +53,8 @@ run_fixture() {
   RESULT_MODULE_VERSION="1.0.0"
   source "${MERIDIAN_ROOT}/modules/security/secure_token/diagnose.sh"
 }
+
+evidence_file="$MERIDIAN_EVIDENCE_DIR/secure_token_detail.txt"
 
 # Caso RC real: usuario productivo habilitado; LCLAdmin y AdminCMDB sin token.
 fixture_fail="$tmp_root/fail"
@@ -57,6 +74,17 @@ assert_contains "evidencia conserva usuario productivo requerido" "$RESULT_EVIDE
 assert_contains "evidencia identifica LCLAdmin requerido sin token" "$RESULT_EVIDENCE" "[REQUIRED] LCLAdmin (UID 501): Secure Token DISABLED"
 assert_contains "evidencia identifica AdminCMDB requerido sin token" "$RESULT_EVIDENCE" "[REQUIRED] AdminCMDB (UID 503): Secure Token DISABLED"
 assert_contains "cuenta técnica queda solo como inventario" "$RESULT_EVIDENCE" "[INVENTORY] _cyberarkepm (UID 504): Secure Token DISABLED"
+
+assert_file "FAIL materializa secure_token_detail.txt" "$evidence_file"
+fail_artifact="$(cat "$evidence_file")"
+assert_contains "artefacto conserva usuario requerido" "$fail_artifact" "[REQUIRED] CARV8707@itau.cl (UID 502): Secure Token ENABLED"
+assert_contains "artefacto conserva LCLAdmin requerido" "$fail_artifact" "[REQUIRED] LCLAdmin (UID 501): Secure Token DISABLED"
+assert_contains "artefacto conserva AdminCMDB requerido" "$fail_artifact" "[REQUIRED] AdminCMDB (UID 503): Secure Token DISABLED"
+assert_contains "artefacto clasifica cuenta técnica solo como inventario" "$fail_artifact" "[INVENTORY] _cyberarkepm (UID 504): Secure Token DISABLED"
+assert_not_contains "artefacto no convierte cuenta técnica en requerida" "$fail_artifact" "[REQUIRED] _cyberarkepm"
+assert_not_contains "artefacto no expone salida cruda de sysadminctl" "$fail_artifact" "Secure token is"
+assert_not_contains "artefacto no contiene campos de contraseña" "$fail_artifact" "password="
+assert_not_contains "artefacto no contiene campos de secreto" "$fail_artifact" "secret="
 
 if result_validate >/dev/null 2>&1; then
   printf '✓  FAIL cumple DiagnosticResult\n'; _pass=$((_pass + 1))
@@ -80,6 +108,10 @@ assert_eq "tres cuentas requeridas habilitadas producen PASS" "PASS" "$RESULT_ST
 assert_eq "PASS usa severidad INFO" "INFO" "$RESULT_SEVERITY"
 assert_eq "título declara política cumplida" "Política Secure Token cumplida" "$RESULT_TITLE"
 assert_contains "admin ajeno a política permanece visible" "$RESULT_EVIDENCE" "[INVENTORY] OtherAdmin (UID 505): Secure Token DISABLED"
+assert_file "PASS también materializa secure_token_detail.txt" "$evidence_file"
+pass_artifact="$(cat "$evidence_file")"
+assert_contains "artefacto PASS conserva las tres identidades requeridas" "$pass_artifact" "[REQUIRED] AdminCMDB (UID 503): Secure Token ENABLED"
+assert_contains "artefacto PASS conserva inventario no objetivo" "$pass_artifact" "[INVENTORY] OtherAdmin (UID 505): Secure Token DISABLED"
 
 if result_validate >/dev/null 2>&1; then
   printf '✓  PASS cumple DiagnosticResult\n'; _pass=$((_pass + 1))
@@ -98,6 +130,9 @@ run_fixture "$fixture_missing"
 
 assert_eq "cuenta requerida ausente produce FAIL" "FAIL" "$RESULT_STATUS"
 assert_contains "ausencia de AdminCMDB queda accionable" "$RESULT_EVIDENCE" "[REQUIRED] AdminCMDB: cuenta no observada en admin (MISSING)"
+assert_file "MISSING también materializa evidencia" "$evidence_file"
+missing_artifact="$(cat "$evidence_file")"
+assert_contains "artefacto conserva ausencia requerida" "$missing_artifact" "[REQUIRED] AdminCMDB: cuenta no observada en admin (MISSING)"
 
 printf 'Pasaron: %s | Fallaron: %s\n' "$_pass" "$_fail"
 exit "$_fail"
