@@ -119,6 +119,23 @@ else
   printf '✗  PASS viola DiagnosticResult\n' >&2; _fail=$((_fail + 1))
 fi
 
+# macOS guarda RecordName normalmente en minúsculas aunque la política use
+# LCLAdmin/AdminCMDB. Ambas formas deben resolver a las mismas identidades.
+fixture_lowercase="$tmp_root/lowercase"
+mkdir -p "$fixture_lowercase"
+cat > "$fixture_lowercase/secure_token_admins.txt" <<'EOF'
+carv8707@itau.cl|502|ENABLED
+lcladmin|501|ENABLED
+admincmdb|503|ENABLED
+EOF
+run_fixture "$fixture_lowercase"
+
+assert_eq "RecordName minúsculo cumple política case-insensitive" "PASS" "$RESULT_STATUS"
+assert_contains "evidencia conserva RecordName real lcladmin" "$RESULT_EVIDENCE" "[REQUIRED] lcladmin (UID 501): Secure Token ENABLED"
+assert_contains "evidencia conserva RecordName real admincmdb" "$RESULT_EVIDENCE" "[REQUIRED] admincmdb (UID 503): Secure Token ENABLED"
+assert_not_contains "lcladmin minúsculo no se declara MISSING" "$RESULT_EVIDENCE" "[REQUIRED] LCLAdmin: cuenta no observada"
+assert_not_contains "admincmdb minúsculo no se declara MISSING" "$RESULT_EVIDENCE" "[REQUIRED] AdminCMDB: cuenta no observada"
+
 # Una cuenta requerida ausente también debe ser incumplimiento explícito.
 fixture_missing="$tmp_root/missing"
 mkdir -p "$fixture_missing"

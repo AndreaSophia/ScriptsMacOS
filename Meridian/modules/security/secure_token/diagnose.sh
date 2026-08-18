@@ -8,6 +8,7 @@
 _DSCL="/usr/bin/dscl"
 _SYSADMINCTL="/usr/sbin/sysadminctl"
 _STAT="/usr/bin/stat"
+_TR="/usr/bin/tr"
 _EVIDENCE_FILE="${MERIDIAN_EVIDENCE_DIR:-}/secure_token_detail.txt"
 
 if [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
@@ -45,6 +46,19 @@ if [ "${MERIDIAN_TEST_MODE:-0}" != "1" ]; then
     RESULT_EXPLANATION="Meridian requiere /usr/bin/stat para identificar el propietario de /dev/console."
     RESULT_RISK="La política de Secure Token no puede evaluarse completamente."
     RESULT_SUGGESTED_ACTION="Verificar la integridad de /usr/bin/stat."
+    RESULT_REPAIRABLE="false"
+    RESULT_REPAIR_RISK="NONE"
+    RESULT_EXIT_CODE="1"
+    return 0
+  }
+  [ -x "$_TR" ] || {
+    RESULT_STATUS="ERROR"
+    RESULT_SEVERITY="HIGH"
+    RESULT_TITLE="tr no disponible"
+    RESULT_DESCRIPTION="No se pueden normalizar de forma confiable los nombres cortos de cuenta."
+    RESULT_EXPLANATION="macOS conserva RecordName en minúsculas aunque la política use nombres con mayúsculas."
+    RESULT_RISK="La política de Secure Token podría clasificar incorrectamente una cuenta requerida."
+    RESULT_SUGGESTED_ACTION="Verificar la integridad de /usr/bin/tr."
     RESULT_REPAIRABLE="false"
     RESULT_REPAIR_RISK="NONE"
     RESULT_EXIT_CODE="1"
@@ -148,23 +162,28 @@ policy_lcl_state="MISSING"
 policy_lcl_uid="?"
 policy_cmdb_state="MISSING"
 policy_cmdb_uid="?"
+policy_current_key="$(printf '%s' "$policy_current_user" | "$_TR" '[:upper:]' '[:lower:]')"
 
 while IFS='|' read -r user uid token_state; do
   [ -n "$user" ] || continue
   total=$((total + 1))
 
+  # RecordName es case-insensitive en macOS y normalmente se materializa en
+  # minúsculas. La política conserva nombres legibles, pero la identidad se
+  # compara por una clave normalizada para no declarar falsos MISSING.
+  user_key="$(printf '%s' "$user" | "$_TR" '[:upper:]' '[:lower:]')"
   required="false"
-  if [ "$user" = "$policy_current_user" ]; then
+  if [ "$user_key" = "$policy_current_key" ]; then
     policy_current_state="$token_state"
     policy_current_uid="$uid"
     required="true"
   fi
-  if [ "$user" = "LCLAdmin" ]; then
+  if [ "$user_key" = "lcladmin" ]; then
     policy_lcl_state="$token_state"
     policy_lcl_uid="$uid"
     required="true"
   fi
-  if [ "$user" = "AdminCMDB" ]; then
+  if [ "$user_key" = "admincmdb" ]; then
     policy_cmdb_state="$token_state"
     policy_cmdb_uid="$uid"
     required="true"
