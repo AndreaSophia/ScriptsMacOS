@@ -59,6 +59,9 @@ assert_fail "repair NONE no representa una acción ejecutable" privilege_check_r
 assert_pass "repair LOW permitido por política MVP" privilege_check_repair LOW
 assert_pass "repair MEDIUM permitido por política MVP" privilege_check_repair MEDIUM
 assert_fail "repair HIGH bloqueado por política MVP" privilege_check_repair HIGH
+assert_pass "Secure Token HIGH permitido solo por política Remedy" \
+  privilege_check_repair HIGH secure_token grant_required_secure_tokens
+assert_fail "otro repair HIGH permanece bloqueado" privilege_check_repair HIGH other arbitrary_repair
 assert_fail "repair CRITICAL bloqueado por política MVP" privilege_check_repair CRITICAL
 
 # SUDO_USER solo es identidad válida si el sistema puede resolver la cuenta.

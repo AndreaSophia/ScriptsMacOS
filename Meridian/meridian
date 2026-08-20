@@ -119,6 +119,7 @@ _parse_args() {
   _OPT_ALL=false
   _OPT_INTERACTIVE=true
   _OPT_REPORT=true
+  _OPT_REPAIR_MODULE=""
   export MERIDIAN_DEBUG=0
   export MERIDIAN_TEST_MODE=0
   export MERIDIAN_FIXTURE_DIR="${MERIDIAN_ROOT}/tests/fixtures"
@@ -127,14 +128,28 @@ _parse_args() {
     case "$1" in
       --module)
         [ $# -ge 2 ] || { printf '%s\n' "[ERROR] --module requiere un ID de módulo" >&2; return 2; }
+        [ -z "$_OPT_REPAIR_MODULE" ] || { printf '%s\n' "[ERROR] --module y --repair no se pueden combinar" >&2; return 2; }
         [ -z "$_OPT_CATEGORY" ] || { printf '%s\n' "[ERROR] --module y --category no se pueden combinar" >&2; return 2; }
         [ "$_OPT_ALL" = "false" ] || { printf '%s\n' "[ERROR] --module y --all no se pueden combinar" >&2; return 2; }
         _OPT_INTERACTIVE=false
         _OPT_MODULES+=("$2")
         shift 2
         ;;
+      --repair)
+        [ $# -ge 2 ] || { printf '%s\n' "[ERROR] --repair requiere un ID de módulo" >&2; return 2; }
+        [ ${#_OPT_MODULES[@]} -eq 0 ] && [ -z "$_OPT_CATEGORY" ] && [ "$_OPT_ALL" = "false" ] || {
+          printf '%s\n' "[ERROR] --repair no se puede combinar con selectores de diagnóstico" >&2
+          return 2
+        }
+        [ -z "$_OPT_REPAIR_MODULE" ] || { printf '%s\n' "[ERROR] --repair solo puede especificarse una vez" >&2; return 2; }
+        _OPT_REPAIR_MODULE="$2"
+        _OPT_MODULES+=("$2")
+        _OPT_INTERACTIVE=false
+        shift 2
+        ;;
       --category)
         [ $# -ge 2 ] || { printf '%s\n' "[ERROR] --category requiere una categoría" >&2; return 2; }
+        [ -z "$_OPT_REPAIR_MODULE" ] || { printf '%s\n' "[ERROR] --category y --repair no se pueden combinar" >&2; return 2; }
         [ ${#_OPT_MODULES[@]} -eq 0 ] || { printf '%s\n' "[ERROR] --category y --module no se pueden combinar" >&2; return 2; }
         [ -z "$_OPT_CATEGORY" ] || { printf '%s\n' "[ERROR] --category solo puede especificarse una vez" >&2; return 2; }
         [ "$_OPT_ALL" = "false" ] || { printf '%s\n' "[ERROR] --category y --all no se pueden combinar" >&2; return 2; }
@@ -143,6 +158,7 @@ _parse_args() {
         shift 2
         ;;
       --all)
+        [ -z "$_OPT_REPAIR_MODULE" ] || { printf '%s\n' "[ERROR] --all y --repair no se pueden combinar" >&2; return 2; }
         [ ${#_OPT_MODULES[@]} -eq 0 ] && [ -z "$_OPT_CATEGORY" ] || {
           printf '%s\n' "[ERROR] --all no se puede combinar con --module o --category" >&2
           return 2
@@ -192,6 +208,7 @@ OPCIONES:
   --module <id>    Ejecutar módulo específico (se puede repetir)
   --category <cat> Ejecutar categoría (security, edr, mdm, network)
   --all            Ejecutar todos los módulos sin menú interactivo
+  --repair <id>    Diagnosticar y solicitar reparación interactiva del módulo
   --test           Sandbox de fixtures; no requiere root ni consulta el sistema real
   --debug          Logs detallados
   --no-report      Solo pantalla, sin generar archivos de reporte
@@ -214,6 +231,7 @@ EJEMPLOS:
   sudo meridian
   sudo meridian --all
   sudo meridian --module secure_token --no-report
+  sudo meridian --repair secure_token
   sudo meridian --module crowdstrike
   sudo meridian --module filevault --module certificates
   sudo meridian --category security
@@ -389,6 +407,21 @@ main() {
     diagnostic_service_execute "${selected_modules[@]}"
   else
     diagnostic_service_execute
+  fi
+
+  if [ -n "$_OPT_REPAIR_MODULE" ]; then
+    local repair_result repair_id repair_risk
+    if ! repair_result="$(aggregator_get_by_module_id "$_OPT_REPAIR_MODULE")" || \
+       ! result_deserialize "$repair_result" || ! result_validate; then
+      log_error "meridian" "No existe un resultado reparable y válido para: $_OPT_REPAIR_MODULE"
+      return 1
+    fi
+    repair_id="$RESULT_REPAIR_ID"
+    repair_risk="$RESULT_REPAIR_RISK"
+    if ! repair_engine_run "$_OPT_REPAIR_MODULE" "$repair_id" "$repair_risk"; then
+      log_error "meridian" "La reparación no se completó o no pudo validarse"
+      return 1
+    fi
   fi
 
   local results summary

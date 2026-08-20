@@ -2,12 +2,12 @@ id: secure_token
 name: Secure Token & Local Administrators
 description: Inventario de administradores locales y verificación de Secure Token por cuenta.
 category: security
-version: 1.0.0
+version: 1.1.0
 author: Apple Platform Team
 criticality: high
-requires_root: false
+requires_root: true
 timeout_seconds: 20
-repairable: false
+repairable: true
 tags:
   - security
   - identity

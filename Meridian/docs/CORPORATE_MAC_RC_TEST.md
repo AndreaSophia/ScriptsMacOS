@@ -11,8 +11,8 @@ git switch develop/meridian-remedy-1.1
 git pull --ff-only
 /bin/bash Meridian/tests/run_all.sh
 /bin/bash Meridian/dist/build_pkg.sh
-pkgutil --payload-files Meridian/dist/Meridian-1.1.0-remedy-rc2.pkg | grep -E '(^|/)\._|(^|/)\.DS_Store$'
-shasum -a 256 Meridian/dist/Meridian-1.1.0-remedy-rc2.pkg
+pkgutil --payload-files Meridian/dist/Meridian-1.1.0-remedy-rc3.pkg | grep -E '(^|/)\._|(^|/)\.DS_Store$'
+shasum -a 256 Meridian/dist/Meridian-1.1.0-remedy-rc3.pkg
 ```
 
 La regresión debe terminar 40/40. La consulta de metadata no debe imprimir
@@ -26,7 +26,7 @@ No continuar sin autorización para instalar software de prueba. Sustituir la
 ruta y el hash por los valores reales:
 
 ```bash
-PKG="$HOME/Downloads/Meridian-1.1.0-remedy-rc2.pkg"
+PKG="$HOME/Downloads/Meridian-1.1.0-remedy-rc3.pkg"
 shasum -a 256 "$PKG"
 pkgutil --check-signature "$PKG"
 ```
@@ -46,7 +46,7 @@ pkgutil --pkg-info com.itau.apple.meridian
 ```
 
 Se espera el symlink `/usr/local/lib/meridian/meridian`, versión
-`1.1.0-remedy-rc2` y ayuda funcional.
+`1.1.0-remedy-rc3` y ayuda funcional.
 
 ## 4. Diagnóstico Secure Token solamente
 

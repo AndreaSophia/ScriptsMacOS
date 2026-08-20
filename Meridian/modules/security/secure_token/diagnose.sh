@@ -225,6 +225,7 @@ fi
 
 RESULT_REPAIRABLE="false"
 RESULT_REPAIR_RISK="NONE"
+RESULT_REPAIR_ID=""
 RESULT_EXIT_CODE="0"
 
 policy_failures=0
@@ -248,6 +249,17 @@ if [ "$policy_failures" -gt 0 ]; then
     RESULT_SUGGESTED_ACTION="Revisar RESULT_EVIDENCE y corregir las cuentas requeridas con estado DISABLED/MISSING; validar manualmente cualquier estado UNKNOWN. No otorgar tokens fuera de estas cuentas por inferencia."
   else
     RESULT_SUGGESTED_ACTION="Revisar RESULT_EVIDENCE y restablecer Secure Token únicamente en las cuentas requeridas que estén DISABLED o MISSING, siguiendo el procedimiento corporativo autorizado."
+    # Solo el caso acotado y comprobable es reparable: el usuario productivo ya
+    # está habilitado y ambas cuentas corporativas existen con estado conocido.
+    # Esto permite reintentar de forma idempotente tras un éxito parcial: el
+    # worker omite la cuenta que ya quedó ENABLED. MISSING/UNKNOWN falla cerrado.
+    if [ "$policy_current_state" = "ENABLED" ] && \
+       { [ "$policy_lcl_state" = "ENABLED" ] || [ "$policy_lcl_state" = "DISABLED" ]; } && \
+       { [ "$policy_cmdb_state" = "ENABLED" ] || [ "$policy_cmdb_state" = "DISABLED" ]; }; then
+      RESULT_REPAIRABLE="true"
+      RESULT_REPAIR_RISK="HIGH"
+      RESULT_REPAIR_ID="grant_required_secure_tokens"
+    fi
   fi
 else
   RESULT_STATUS="PASS"

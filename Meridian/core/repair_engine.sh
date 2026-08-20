@@ -33,10 +33,25 @@ _repair_trusted_file() {
 
 _repair_run_worker() {
   local worker_path="$1"
+  local io_mode="${2:-logged}"
 
   # env -i evita que variables heredadas (incluidas credenciales) crucen la
   # frontera del worker. El módulo solo recibe contexto no secreto y rutas
   # canónicas. Las autorizaciones interactivas pertenecen a macOS, no a env.
+  if [ "$io_mode" = "interactive" ]; then
+    /usr/bin/env -i \
+      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+      MERIDIAN_ROOT="${MERIDIAN_ROOT}" \
+      MERIDIAN_MODULE_DIR="${MERIDIAN_MODULE_DIR}" \
+      MERIDIAN_EVIDENCE_DIR="${MERIDIAN_EVIDENCE_DIR}" \
+      MERIDIAN_LOG_FILE="${MERIDIAN_LOG_FILE}" \
+      RESULT_MODULE_ID="${RESULT_MODULE_ID}" \
+      RESULT_REPAIR_ID="${RESULT_REPAIR_ID}" \
+      RESULT_REPAIR_RISK="${RESULT_REPAIR_RISK}" \
+      /bin/bash "$worker_path"
+    return $?
+  fi
+
   /usr/bin/env -i \
     PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
     MERIDIAN_ROOT="${MERIDIAN_ROOT}" \
@@ -150,7 +165,7 @@ repair_engine_run() {
     return 1
   fi
 
-  if ! privilege_check_repair "$RESULT_REPAIR_RISK"; then
+  if ! privilege_check_repair "$RESULT_REPAIR_RISK" "$module_id" "$RESULT_REPAIR_ID"; then
     return 1
   fi
 
@@ -209,7 +224,10 @@ repair_engine_run() {
   # dentro de un if para impedir que `set -e` cierre Meridian antes del audit.
   # Se usa el intérprete del sistema por ruta absoluta: una reparación root no
   # debe depender de PATH ni poder resolver un `bash` ajeno al macOS base.
-  if _repair_run_worker "$repair_path"; then
+  # El worker de acción conserva el TTY: sysadminctl escribe sus prompts en
+  # stderr. Redirigirlos al log ocultaría la solicitud de credenciales al
+  # operador. La auditoría estructurada la mantiene el engine, no el prompt.
+  if _repair_run_worker "$repair_path" interactive; then
     repair_rc=0
   else
     repair_rc=$?

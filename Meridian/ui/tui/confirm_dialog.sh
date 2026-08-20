@@ -33,6 +33,7 @@ tui_confirm_repair() {
   case "$repair_risk" in
     LOW)    risk_color='\033[0;32m' ;;
     MEDIUM) risk_color='\033[0;33m' ;;
+    HIGH)   risk_color='\033[0;31m' ;;
     *)      return 1 ;;
   esac
 
@@ -68,6 +69,11 @@ _tui_confirm_plain() {
       printf "  Riesgo MEDIO. Escribe \033[1mCONFIRMAR\033[0m para proceder: "
       IFS= read -r reply || return 1
       [ "$reply" = "CONFIRMAR" ]
+      ;;
+    HIGH)
+      printf "  Riesgo ALTO y sin rollback automático. Escribe \033[1mAUTORIZO SECURE TOKEN\033[0m: "
+      IFS= read -r reply || return 1
+      [ "$reply" = "AUTORIZO SECURE TOKEN" ]
       ;;
     *)
       return 1

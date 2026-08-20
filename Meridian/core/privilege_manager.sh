@@ -80,6 +80,8 @@ privilege_check_module() {
 # explícita de reparación avanzada y cobertura de tests suficiente.
 privilege_check_repair() {
   local repair_risk="$1"
+  local module_id="${2:-}"
+  local repair_id="${3:-}"
 
   case "$repair_risk" in
     LOW|MEDIUM)
@@ -91,8 +93,14 @@ privilege_check_repair() {
       return 1
       ;;
     HIGH)
+      # Excepción estrecha de Remedy 1.1: solo esta operación, con precheck,
+      # consentimiento fuerte, prompts nativos y verificación posterior.
+      if [ "$module_id" = "secure_token" ] && \
+         [ "$repair_id" = "grant_required_secure_tokens" ]; then
+        return 0
+      fi
       log_error "privilege_manager" \
-        "Reparaciones de riesgo HIGH están bloqueadas en el MVP."
+        "Reparación HIGH no autorizada por la política de Remedy."
       return 1
       ;;
     CRITICAL)

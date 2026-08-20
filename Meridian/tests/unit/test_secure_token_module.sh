@@ -50,7 +50,7 @@ run_fixture() {
   export MERIDIAN_FIXTURE_DIR="$fixture_dir"
   result_init
   RESULT_MODULE_ID="secure_token"
-  RESULT_MODULE_VERSION="1.0.0"
+  RESULT_MODULE_VERSION="1.1.0"
   source "${MERIDIAN_ROOT}/modules/security/secure_token/diagnose.sh"
 }
 
@@ -70,6 +70,9 @@ run_fixture "$fixture_fail"
 assert_eq "incumplimiento de cuenta requerida produce FAIL" "FAIL" "$RESULT_STATUS"
 assert_eq "incumplimiento de política es HIGH" "HIGH" "$RESULT_SEVERITY"
 assert_eq "título declara política incumplida" "Política Secure Token incumplida" "$RESULT_TITLE"
+assert_eq "escenario corporativo acotado declara reparación" "true" "$RESULT_REPAIRABLE"
+assert_eq "Secure Token conserva clasificación HIGH" "HIGH" "$RESULT_REPAIR_RISK"
+assert_eq "repair id es estable" "grant_required_secure_tokens" "$RESULT_REPAIR_ID"
 assert_contains "evidencia conserva usuario productivo requerido" "$RESULT_EVIDENCE" "[REQUIRED] CARV8707@itau.cl (UID 502): Secure Token ENABLED"
 assert_contains "evidencia identifica LCLAdmin requerido sin token" "$RESULT_EVIDENCE" "[REQUIRED] LCLAdmin (UID 501): Secure Token DISABLED"
 assert_contains "evidencia identifica AdminCMDB requerido sin token" "$RESULT_EVIDENCE" "[REQUIRED] AdminCMDB (UID 503): Secure Token DISABLED"
@@ -107,6 +110,7 @@ run_fixture "$fixture_pass"
 assert_eq "tres cuentas requeridas habilitadas producen PASS" "PASS" "$RESULT_STATUS"
 assert_eq "PASS usa severidad INFO" "INFO" "$RESULT_SEVERITY"
 assert_eq "título declara política cumplida" "Política Secure Token cumplida" "$RESULT_TITLE"
+assert_eq "política conforme no ofrece reparación" "false" "$RESULT_REPAIRABLE"
 assert_contains "admin ajeno a política permanece visible" "$RESULT_EVIDENCE" "[INVENTORY] OtherAdmin (UID 505): Secure Token DISABLED"
 assert_file "PASS también materializa secure_token_detail.txt" "$evidence_file"
 pass_artifact="$(cat "$evidence_file")"
@@ -146,10 +150,24 @@ EOF
 run_fixture "$fixture_missing"
 
 assert_eq "cuenta requerida ausente produce FAIL" "FAIL" "$RESULT_STATUS"
+assert_eq "cuenta ausente falla cerrado sin reparación" "false" "$RESULT_REPAIRABLE"
 assert_contains "ausencia de AdminCMDB queda accionable" "$RESULT_EVIDENCE" "[REQUIRED] AdminCMDB: cuenta no observada en admin (MISSING)"
 assert_file "MISSING también materializa evidencia" "$evidence_file"
 missing_artifact="$(cat "$evidence_file")"
 assert_contains "artefacto conserva ausencia requerida" "$missing_artifact" "[REQUIRED] AdminCMDB: cuenta no observada en admin (MISSING)"
+
+# Un éxito parcial debe poder reintentarse sin volver a tocar la cuenta ya
+# habilitada; repair.sh es idempotente y la omitirá.
+fixture_partial="$tmp_root/partial"
+mkdir -p "$fixture_partial"
+cat > "$fixture_partial/secure_token_admins.txt" <<'EOF'
+CARV8707@itau.cl|502|ENABLED
+LCLAdmin|501|ENABLED
+AdminCMDB|503|DISABLED
+EOF
+run_fixture "$fixture_partial"
+assert_eq "éxito parcial sigue siendo reparable" "true" "$RESULT_REPAIRABLE"
+assert_eq "éxito parcial conserva repair id" "grant_required_secure_tokens" "$RESULT_REPAIR_ID"
 
 printf 'Pasaron: %s | Fallaron: %s\n' "$_pass" "$_fail"
 exit "$_fail"
