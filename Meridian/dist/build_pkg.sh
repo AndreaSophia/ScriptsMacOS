@@ -103,6 +103,27 @@ _write_payload_manifest() {
   chmod 644 "$manifest"
 }
 
+_copy_tree_without_metadata() {
+  local source_dir="$1" destination_dir="$2" relative source_path destination_path
+
+  mkdir -p "$destination_dir"
+  while IFS= read -r relative; do
+    [ "$relative" != "." ] || continue
+    source_path="${source_dir}/${relative#./}"
+    destination_path="${destination_dir}/${relative#./}"
+    if [ -d "$source_path" ] && [ ! -L "$source_path" ]; then
+      mkdir -p "$destination_path"
+    else
+      mkdir -p "$(dirname "$destination_path")"
+      /usr/bin/ditto --norsrc "$source_path" "$destination_path"
+    fi
+  done < <(
+    cd "$source_dir" || exit 1
+    find . \( -name '.DS_Store' -o -name '._*' \) -prune -o \
+      \( -type d -o -type f -o -type l \) -print
+  )
+}
+
 _prepare_payload() {
   echo "[BUILD] Preparando payload..."
   rm -rf "$BUILD_DIR"
@@ -122,7 +143,7 @@ _prepare_payload() {
   for dir in config modules rules core services reporting logging ui contracts; do
     if [ -d "${PROJECT_ROOT}/${dir}" ]; then
       mkdir -p "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/${dir}"
-      /usr/bin/ditto --norsrc "${PROJECT_ROOT}/${dir}" \
+      _copy_tree_without_metadata "${PROJECT_ROOT}/${dir}" \
         "${PAYLOAD_DIR}${PKG_INSTALL_LOCATION}/${dir}"
     fi
   done

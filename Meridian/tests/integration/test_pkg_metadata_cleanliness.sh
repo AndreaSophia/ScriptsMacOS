@@ -38,6 +38,8 @@ fi
 
 assert_contains '/usr/bin/ditto --norsrc' \
   "payload se copia sin resource forks/xattrs/ACLs"
+assert_contains "find . \\( -name '.DS_Store' -o -name '._*' \\) -prune" \
+  "metadata Finder se excluye antes de copiar el payload"
 assert_contains '/usr/bin/xattr -cr "$PAYLOAD_DIR"' \
   "payload ensamblado limpia atributos antes de pkgbuild"
 assert_contains 'COPYFILE_DISABLE=1 pkgbuild' \
